@@ -2443,6 +2443,17 @@ def render_parameter_ui() -> Params:
     except (ValueError, TypeError):
         return default
 
+# --- Excel mapping helpers (paste at column 0) ---
+def _to_float(x, default=None):
+    if x is None or x == "":
+        return default
+    if isinstance(x, (int, float)):
+        return float(x)
+    try:
+        return float(x)
+    except (ValueError, TypeError):
+        return default
+
 def _to_int(x, default=None):
     fx = _to_float(x, None)
     if fx is None:
@@ -2453,13 +2464,13 @@ def _to_int(x, default=None):
         return default
 
 def get_val(excel_vals: dict, key: str, default=None):
-    """Fetch value from excel_vals and cast to float when possible."""
+    # Fetch value and cast to float when possible
     if key in excel_vals:
         return _to_float(excel_vals.get(key), default)
     return default
 
-def get_first(excel_vals: dict, keys: list[str], default=None, as_int=False):
-    """Try multiple keys (new + legacy). Return first hit, optionally cast to int."""
+def get_first(excel_vals: dict, keys: list, default=None, as_int=False):
+    # Try multiple keys (new + legacy). Return first hit.
     for k in keys:
         if k in excel_vals and excel_vals[k] not in (None, ""):
             return _to_int(excel_vals[k], default) if as_int else _to_float(excel_vals[k], default)
