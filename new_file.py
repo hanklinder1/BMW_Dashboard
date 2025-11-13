@@ -2499,42 +2499,42 @@ def map_excel_to_params(excel_vals: dict, params):
     if val is not None: params.etl_usd_per_tb_year_before = val
 
                             
-                            # Map Excel values to Params
-                            params = map_excel_to_params(temp_ui_vals, params)
-                            update_params_in_session(params)
+    # Map Excel values to Params
+    params = map_excel_to_params(temp_ui_vals, params)
+    update_params_in_session(params)
                             
-                            # Force rerun immediately - this will refresh all calculations and pages
-                            st.rerun()
+    # Force rerun immediately - this will refresh all calculations and pages
+    st.rerun()
             
-            # Show preview if Excel values are already loaded (even if file uploader is None after rerun)
-            if st.session_state.get('excel_loaded', False):
-                with st.expander("📋 Preview Imported Values", expanded=False):
-                    excel_params = {}
-                    for k, v in st.session_state.items():
-                        if k.startswith('excel_'):
-                            param_name = k.replace('excel_', '')
-                            excel_params[param_name] = v
-                    if excel_params:
-                        preview_df = pd.DataFrame({
-                            'Parameter': list(excel_params.keys()),
-                            'Value': list(excel_params.values())
-                        })
-                        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    # Show preview if Excel values are already loaded (even if file uploader is None after rerun)
+        if st.session_state.get('excel_loaded', False):
+            with st.expander("📋 Preview Imported Values", expanded=False):
+                excel_params = {}
+                for k, v in st.session_state.items():
+                    if k.startswith('excel_'):
+                        param_name = k.replace('excel_', '')
+                        excel_params[param_name] = v
+                if excel_params:
+                    preview_df = pd.DataFrame({
+                        'Parameter': list(excel_params.keys()),
+                        'Value': list(excel_params.values())
+                    })
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
         
-        # Export Template Button
-        st.markdown("---")
-        if st.button("📥 Download Template Excel File"):
-            template_df = create_template_excel()
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                template_df.to_excel(writer, index=False, sheet_name='Parameters')
-            output.seek(0)
-            st.download_button(
-                label="⬇️ Download Template",
-                data=output,
-                file_name="parameter_template.xlsx",
-                mime="application/vnd.openpyxl-officedocument.spreadsheetml.sheet"
-            )
+# Export Template Button
+st.markdown("---")
+if st.button("📥 Download Template Excel File"):
+    template_df = create_template_excel()
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        template_df.to_excel(writer, index=False, sheet_name='Parameters')
+    output.seek(0)
+    st.download_button(
+        label="⬇️ Download Template",
+        data=output,
+        file_name="parameter_template.xlsx",
+        mime="application/vnd.openpyxl-officedocument.spreadsheetml.sheet"
+    )
     
     st.markdown("---")
     
