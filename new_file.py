@@ -2433,7 +2433,7 @@ def render_parameter_ui() -> Params:
                                     ui_key = k.replace('excel_', '')
                                     temp_ui_vals[ui_key] = v
                             
-                            def _to_float(x, default=None):
+    def _to_float(x, default=None):
     if x is None or x == "":
         return default
     if isinstance(x, (int, float)):
