@@ -2507,7 +2507,7 @@ def map_excel_to_params(excel_vals: dict, params):
     st.rerun()
             
     # Show preview if Excel values are already loaded (even if file uploader is None after rerun)
-        if st.session_state.get('excel_loaded', False):
+    if st.session_state.get('excel_loaded', False):
             with st.expander("📋 Preview Imported Values", expanded=False):
                 excel_params = {}
                 for k, v in st.session_state.items():
