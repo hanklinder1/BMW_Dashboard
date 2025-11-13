@@ -771,11 +771,15 @@ st.markdown("""
         color: #0a1929;
         border-radius: 10px;
         font-weight: 600;
-        padding: 0.75rem 1.5rem;
+        padding: 1rem 1.25rem;
         border: 1.5px solid rgba(0,102,204,0.15);
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        font-size: 0.9rem;
+        font-size: 0.95rem;
         box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        min-height: 56px;
+        white-space: normal;
+        word-wrap: break-word;
+        line-height: 1.3;
     }
     
     .stButton>button:hover {
@@ -2874,11 +2878,13 @@ st.markdown("""
 <style>
     /* Ensure all navigation buttons have uniform size */
     button[kind="secondary"], button[kind="primary"] {
-        min-height: 48px !important;
-        height: 48px !important;
-        font-size: 14px !important;
+        min-height: 64px !important;
+        height: auto !important;
+        font-size: 15px !important;
         white-space: normal !important;
         word-wrap: break-word !important;
+        padding: 12px 16px !important;
+        line-height: 1.4 !important;
     }
 </style>
 """, unsafe_allow_html=True)
