@@ -2433,87 +2433,144 @@ def render_parameter_ui() -> Params:
                                     ui_key = k.replace('excel_', '')
                                     temp_ui_vals[ui_key] = v
                             
-                            # Map Excel values to Params object
-                            def map_excel_to_params(excel_vals: Dict, params: Params) -> Params:
-                                """Map Excel values directly to Params object."""
-                                # Use the same mapping logic as map_ui_to_params
-                                if 'w_before' in excel_vals:
-                                    params.wage_usd_per_hour_before = float(excel_vals['w_before'])
-                                if 'w_after' in excel_vals:
-                                    params.wage_usd_per_hour_after = float(excel_vals['w_after'])
-                                if 'phi_before' in excel_vals:
-                                    params.overhead_multiplier_before = float(excel_vals['phi_before'])
-                                if 'phi_after' in excel_vals:
-                                    params.overhead_multiplier_after = float(excel_vals['phi_after'])
-                                if 'scrap_rate_before' in excel_vals:
-                                    params.scrap_rate_before = float(excel_vals['scrap_rate_before'])
-                                if 'scrap_rate_after' in excel_vals:
-                                    params.scrap_rate_after = float(excel_vals['scrap_rate_after'])
-                                if 'security_before' in excel_vals:
-                                    params.security_spend_usd_per_year_before = float(excel_vals['security_before'])
-                                if 'security_after' in excel_vals:
-                                    params.security_spend_usd_per_year_after = float(excel_vals['security_after'])
-                                if 'capex_before' in excel_vals:
-                                    params.capex_usd_before = float(excel_vals['capex_before'])
-                                if 'useful_life_years_before' in excel_vals:
-                                    params.useful_life_years_before = float(excel_vals['useful_life_years_before'])
-                                if 'tau_before' in excel_vals:
-                                    params.labeling_time_hours_per_label_before = float(excel_vals['tau_before'])
-                                if 'n_labels_before' in excel_vals:
-                                    params.labels_per_year_before = int(excel_vals['n_labels_before'])
-                                if 'size_tb_before' in excel_vals:
-                                    params.dataset_tb_before = float(excel_vals['size_tb_before'])
-                                if 'cTB_yr_before' in excel_vals:
-                                    params.storage_usd_per_tb_year_before = float(excel_vals['cTB_yr_before'])
-                                if 'alpha_yr_before' in excel_vals:
-                                    params.etl_usd_per_tb_year_before = float(excel_vals['alpha_yr_before'])
-                                if 'beta_ops_yr_before' in excel_vals:
-                                    params.mlops_usd_per_model_year_before = float(excel_vals['beta_ops_yr_before'])
-                                if 'n_models_before' in excel_vals:
-                                    params.models_deployed_before = int(excel_vals['n_models_before'])
-                                if 'tau_after' in excel_vals:
-                                    params.labeling_time_hours_per_label_after = float(excel_vals['tau_after'])
-                                if 'n_labels_after' in excel_vals:
-                                    params.labels_per_year_after = int(excel_vals['n_labels_after'])
-                                if 'size_tb_after' in excel_vals:
-                                    params.dataset_tb_after = float(excel_vals['size_tb_after'])
-                                if 'cTB_yr_after' in excel_vals:
-                                    params.storage_usd_per_tb_year_after = float(excel_vals['cTB_yr_after'])
-                                if 'alpha_yr_after' in excel_vals:
-                                    params.etl_usd_per_tb_year_after = float(excel_vals['alpha_yr_after'])
-                                if 'beta_ops_yr_after' in excel_vals:
-                                    params.mlops_usd_per_model_year_after = float(excel_vals['beta_ops_yr_after'])
-                                if 'n_models_after' in excel_vals:
-                                    params.models_deployed_after = int(excel_vals['n_models_after'])
-                                if 'capex_after' in excel_vals:
-                                    params.capex_usd_after = float(excel_vals['capex_after'])
-                                if 'useful_life_years_after' in excel_vals:
-                                    params.useful_life_years_after = float(excel_vals['useful_life_years_after'])
-                                if 'units_per_year' in excel_vals:
-                                    params.units_per_year = float(excel_vals['units_per_year'])
-                                if 'material_cost_per_unit' in excel_vals:
-                                    params.material_cost_usd_per_unit = float(excel_vals['material_cost_per_unit'])
-                                # Check both 'oee_rate' (UI key) and 'oee_improvement_rate' (legacy) and 'oee_improvement_fraction' (Excel name)
-                                if 'oee_rate' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_rate'])
-                                elif 'oee_improvement_rate' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_improvement_rate'])
-                                elif 'oee_improvement_fraction' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_improvement_fraction'])
-                                if 'downtime_hours_avoided' in excel_vals:
-                                    params.downtime_hours_avoided_per_year = float(excel_vals['downtime_hours_avoided'])
-                                if 'operating_hours_year' in excel_vals:
-                                    params.operating_hours_per_year = float(excel_vals['operating_hours_year'])
-                                if 'cm_per_unit' in excel_vals:
-                                    params.contribution_margin_usd_per_unit = float(excel_vals['cm_per_unit'])
-                                if 'downtime_cost_per_hour' in excel_vals:
-                                    params.overhead_usd_per_downtime_hour = float(excel_vals['downtime_cost_per_hour'])
-                                if 'restart_scrap_fraction' in excel_vals:
-                                    params.restart_scrap_fraction = float(excel_vals['restart_scrap_fraction'])
-                                if 'eta' in excel_vals:
-                                    params.security_effectiveness_per_dollar = float(excel_vals['eta'])
-                                if 'L_breach_yr' in excel_vals:
-                                    params.breach_loss_envelope_usd = float(excel_vals['L_breach_yr'])
+                            """Map Excel values directly to Params object. Handles both new full names and legacy names."""
+                                # Helper to safely get and convert value
+                                def get_val(key, default=None):
+                                    if key in excel_vals:
+                                        try:
+                                            val = excel_vals[key]
+                                            if val is None or val == '':
+                                                return default
+                                            return float(val) if not isinstance(val, (int, float)) else val
+                                        except (ValueError, TypeError):
+                                            return default
+                                    return default
+                                
+                                # PAIRED COST PARAMETERS - Check both new full names and legacy names
+                                # Wage
+                                val = get_val('wage_usd_per_hour_before') or get_val('w_before')
+                                if val is not None:
+                                    params.wage_usd_per_hour_before = val
+                                val = get_val('wage_usd_per_hour_after') or get_val('w_after')
+                                if val is not None:
+                                    params.wage_usd_per_hour_after = val
+                                
+                                # Overhead
+                                val = get_val('overhead_multiplier_before') or get_val('phi_before')
+                                if val is not None:
+                                    params.overhead_multiplier_before = val
+                                val = get_val('overhead_multiplier_after') or get_val('phi_after')
+                                if val is not None:
+                                    params.overhead_multiplier_after = val
+                                
+                                # Scrap rate
+                                val = get_val('scrap_rate_before')
+                                if val is not None:
+                                    params.scrap_rate_before = val
+                                val = get_val('scrap_rate_after')
+                                if val is not None:
+                                    params.scrap_rate_after = val
+                                
+                                # Security spend
+                                val = get_val('security_spend_usd_per_year_before') or get_val('security_before')
+                                if val is not None:
+                                    params.security_spend_usd_per_year_before = val
+                                val = get_val('security_spend_usd_per_year_after') or get_val('security_after')
+                                if val is not None:
+                                    params.security_spend_usd_per_year_after = val
+                                
+                                # BEFORE-ONLY COSTS
+                                val = get_val('capex_usd_before') or get_val('capex_before')
+                                if val is not None:
+                                    params.capex_usd_before = val
+                                val = get_val('useful_life_years_before')
+                                if val is not None:
+                                    params.useful_life_years_before = val
+                                
+                                val = get_val('labeling_time_hours_per_label_before') or get_val('tau_before')
+                                if val is not None:
+                                    params.labeling_time_hours_per_label_before = val
+                                val = get_val('labels_per_year_before') or get_val('n_labels_before')
+                                if val is not None:
+                                    params.labels_per_year_before = int(val)
+                                val = get_val('dataset_tb_before') or get_val('size_tb_before')
+                                if val is not None:
+                                    params.dataset_tb_before = val
+                                val = get_val('storage_usd_per_tb_year_before') or get_val('cTB_yr_before')
+                                if val is not None:
+                                    params.storage_usd_per_tb_year_before = val
+                                val = get_val('etl_usd_per_tb_year_before') or get_val('alpha_yr_before')
+                                if val is not None:
+                                    params.etl_usd_per_tb_year_before = val
+                                val = get_val('mlops_usd_per_model_year_before') or get_val('beta_ops_yr_before')
+                                if val is not None:
+                                    params.mlops_usd_per_model_year_before = val
+                                val = get_val('models_deployed_before') or get_val('n_models_before')
+                                if val is not None:
+                                    params.models_deployed_before = int(val)
+                                
+                                # AFTER-ONLY COSTS
+                                val = get_val('labeling_time_hours_per_label_after') or get_val('tau_after')
+                                if val is not None:
+                                    params.labeling_time_hours_per_label_after = val
+                                val = get_val('labels_per_year_after') or get_val('n_labels_after') or get_val('n_labels')
+                                if val is not None:
+                                    params.labels_per_year_after = int(val)
+                                val = get_val('dataset_tb_after') or get_val('size_tb_after') or get_val('size_tb')
+                                if val is not None:
+                                    params.dataset_tb_after = val
+                                val = get_val('storage_usd_per_tb_year_after') or get_val('cTB_yr_after')
+                                if val is not None:
+                                    params.storage_usd_per_tb_year_after = val
+                                val = get_val('etl_usd_per_tb_year_after') or get_val('alpha_yr_after')
+                                if val is not None:
+                                    params.etl_usd_per_tb_year_after = val
+                                val = get_val('mlops_usd_per_model_year_after') or get_val('beta_ops_yr_after')
+                                if val is not None:
+                                    params.mlops_usd_per_model_year_after = val
+                                val = get_val('models_deployed_after') or get_val('n_models_after') or get_val('n_models')
+                                if val is not None:
+                                    params.models_deployed_after = int(val)
+                                val = get_val('capex_usd_after') or get_val('capex_after') or get_val('capex')
+                                if val is not None:
+                                    params.capex_usd_after = val
+                                val = get_val('useful_life_years_after')
+                                if val is not None:
+                                    params.useful_life_years_after = val
+                                
+                                # BENEFIT PARAMETERS
+                                val = get_val('oee_improvement_fraction') or get_val('oee_rate') or get_val('oee_improvement_rate')
+                                if val is not None:
+                                    params.oee_improvement_fraction = val
+                                val = get_val('downtime_hours_avoided_per_year') or get_val('downtime_hours_avoided')
+                                if val is not None:
+                                    params.downtime_hours_avoided_per_year = val
+                                val = get_val('overhead_usd_per_downtime_hour') or get_val('downtime_cost_per_hour')
+                                if val is not None:
+                                    params.overhead_usd_per_downtime_hour = val
+                                val = get_val('restart_scrap_fraction')
+                                if val is not None:
+                                    params.restart_scrap_fraction = val
+                                val = get_val('contribution_margin_usd_per_unit') or get_val('cm_per_unit')
+                                if val is not None:
+                                    params.contribution_margin_usd_per_unit = val
+                                
+                                # SHARED CONTEXT
+                                val = get_val('units_per_year')
+                                if val is not None:
+                                    params.units_per_year = val
+                                val = get_val('operating_hours_per_year') or get_val('operating_hours_year')
+                                if val is not None:
+                                    params.operating_hours_per_year = val
+                                val = get_val('material_cost_usd_per_unit') or get_val('material_cost_per_unit')
+                                if val is not None:
+                                    params.material_cost_usd_per_unit = val
+                                val = get_val('breach_loss_envelope_usd') or get_val('L_breach_yr')
+                                if val is not None:
+                                    params.breach_loss_envelope_usd = val
+                                val = get_val('security_effectiveness_per_dollar') or get_val('eta')
+                                if val is not None:
+                                    params.security_effectiveness_per_dollar = val
                                 return params
                             
                             # Map Excel values to Params
