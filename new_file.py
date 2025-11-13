@@ -2433,7 +2433,7 @@ def render_parameter_ui() -> Params:
                                     ui_key = k.replace('excel_', '')
                                     temp_ui_vals[ui_key] = v
                             
-# --- Excel mapping helpers (paste at column 0, not inside any """ """ block) ---
+# --- Excel mapping helpers (place these at top level, not indented) ---
 def _to_float(x, default=None):
     if x is None or x == "":
         return default
@@ -2444,6 +2444,7 @@ def _to_float(x, default=None):
     except (ValueError, TypeError):
         return default
 
+
 def _to_int(x, default=None):
     fx = _to_float(x, None)
     if fx is None:
@@ -2453,74 +2454,93 @@ def _to_int(x, default=None):
     except (ValueError, TypeError, OverflowError):
         return default
 
+
 def get_first(excel_vals: dict, keys, default=None, as_int=False):
     for k in keys:
         if k in excel_vals and excel_vals[k] not in (None, ""):
             return _to_int(excel_vals[k], default) if as_int else _to_float(excel_vals[k], default)
     return default
 
+
 def map_excel_to_params(excel_vals: dict, params):
+    """Map Excel values directly to Params object (handles both new and legacy names)."""
     # ---- PAIRED COST PARAMETERS ----
     val = get_first(excel_vals, ["wage_usd_per_hour_before", "w_before"])
-    if val is not None: params.wage_usd_per_hour_before = val
+    if val is not None:
+        params.wage_usd_per_hour_before = val
     val = get_first(excel_vals, ["wage_usd_per_hour_after", "w_after"])
-    if val is not None: params.wage_usd_per_hour_after = val
+    if val is not None:
+        params.wage_usd_per_hour_after = val
 
     val = get_first(excel_vals, ["overhead_multiplier_before", "phi_before"])
-    if val is not None: params.overhead_multiplier_before = val
+    if val is not None:
+        params.overhead_multiplier_before = val
     val = get_first(excel_vals, ["overhead_multiplier_after", "phi_after"])
-    if val is not None: params.overhead_multiplier_after = val
+    if val is not None:
+        params.overhead_multiplier_after = val
 
     val = get_first(excel_vals, ["scrap_rate_before"])
-    if val is not None: params.scrap_rate_before = val
+    if val is not None:
+        params.scrap_rate_before = val
     val = get_first(excel_vals, ["scrap_rate_after"])
-    if val is not None: params.scrap_rate_after = val
+    if val is not None:
+        params.scrap_rate_after = val
 
     val = get_first(excel_vals, ["security_spend_usd_per_year_before", "security_before"])
-    if val is not None: params.security_spend_usd_per_year_before = val
+    if val is not None:
+        params.security_spend_usd_per_year_before = val
     val = get_first(excel_vals, ["security_spend_usd_per_year_after", "security_after"])
-    if val is not None: params.security_spend_usd_per_year_after = val
+    if val is not None:
+        params.security_spend_usd_per_year_after = val
 
     # ---- BEFORE-ONLY COSTS ----
     val = get_first(excel_vals, ["capex_usd_before", "capex_before"])
-    if val is not None: params.capex_usd_before = val
+    if val is not None:
+        params.capex_usd_before = val
     val = get_first(excel_vals, ["useful_life_years_before"])
-    if val is not None: params.useful_life_years_before = val
+    if val is not None:
+        params.useful_life_years_before = val
 
     val = get_first(excel_vals, ["labeling_time_hours_per_label_before", "tau_before"])
-    if val is not None: params.labeling_time_hours_per_label_before = val
+    if val is not None:
+        params.labeling_time_hours_per_label_before = val
     val = get_first(excel_vals, ["labels_per_year_before", "n_labels_before"], as_int=True)
-    if val is not None: params.labels_per_year_before = val
+    if val is not None:
+        params.labels_per_year_before = val
     val = get_first(excel_vals, ["dataset_tb_before", "size_tb_before"])
-    if val is not None: params.dataset_tb_before = val
+    if val is not None:
+        params.dataset_tb_before = val
     val = get_first(excel_vals, ["storage_usd_per_tb_year_before", "cTB_yr_before"])
-    if val is not None: params.storage_usd_per_tb_year_before = val
+    if val is not None:
+        params.storage_usd_per_tb_year_before = val
     val = get_first(excel_vals, ["etl_usd_per_tb_year_before", "alpha_yr_before"])
-    if val is not None: params.etl_usd_per_tb_year_before = val
+    if val is not None:
+        params.etl_usd_per_tb_year_before = val
 
-                            
-    # Map Excel values to Params
-    params = map_excel_to_params(temp_ui_vals, params)
-    update_params_in_session(params)
-                            
-    # Force rerun immediately - this will refresh all calculations and pages
-    st.rerun()
-            
-    # Show preview if Excel values are already loaded (even if file uploader is None after rerun)
-    if st.session_state.get('excel_loaded', False):
-            with st.expander("📋 Preview Imported Values", expanded=False):
-                excel_params = {}
-                for k, v in st.session_state.items():
-                    if k.startswith('excel_'):
-                        param_name = k.replace('excel_', '')
-                        excel_params[param_name] = v
-                if excel_params:
-                    preview_df = pd.DataFrame({
-                        'Parameter': list(excel_params.keys()),
-                        'Value': list(excel_params.values())
-                    })
-                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
-        
+
+# --- Streamlit section to handle mapping, preview, and download ---
+# Map Excel values to Params
+map_excel_to_params(temp_ui_vals, params)
+update_params_in_session(params)
+
+# Force rerun immediately - this will refresh all calculations and pages
+st.rerun()
+
+# Show preview if Excel values are already loaded (even if file uploader is None after rerun)
+if st.session_state.get('excel_loaded', False):
+    with st.expander("📋 Preview Imported Values", expanded=False):
+        excel_params = {}
+        for k, v in st.session_state.items():
+            if k.startswith('excel_'):
+                param_name = k.replace('excel_', '')
+                excel_params[param_name] = v
+        if excel_params:
+            preview_df = pd.DataFrame({
+                'Parameter': list(excel_params.keys()),
+                'Value': list(excel_params.values())
+            })
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
 # Export Template Button
 st.markdown("---")
 if st.button("📥 Download Template Excel File"):
@@ -2533,10 +2553,11 @@ if st.button("📥 Download Template Excel File"):
         label="⬇️ Download Template",
         data=output,
         file_name="parameter_template.xlsx",
-        mime="application/vnd.openpyxl-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    
-    st.markdown("---")
+
+st.markdown("---")
+
     
     # Collect all UI values in a dictionary
     ui_values = {}
