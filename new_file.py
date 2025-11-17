@@ -15,6 +15,10 @@ from statsmodels.stats.diagnostic import het_breuschpagan
 import io
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, List, Optional
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.ticker import FuncFormatter
+import seaborn as sns
 
 # ============================================================================
 # DATA BREACH RISK VALUATION CLASSES
@@ -1392,13 +1396,26 @@ def downtime_cost_per_hour(p, crew_size=15, restart_scrap_pct=0.02):
 # CES PRODUCTION OPTIMIZATION FUNCTIONS
 # ============================================================================
 def ces_production(L, K, A, alpha, rho):
-    """Compute CES production: q = A[α L^(-ρ) + (1-α) K^(-ρ)]^(-1/ρ)"""
-    if rho == 0:
-        # Cobb-Douglas case (limit as rho -> 0)
-        return A * (L ** alpha) * (K ** (1 - alpha))
-    else:
-        inner = alpha * (L ** (-rho)) + (1 - alpha) * (K ** (-rho))
-        return A * (inner ** (-1.0 / rho))
+    """CES production: q = A[αL^(-ρ) + (1-α)K^(-ρ)]^(-1/ρ)"""
+    L_safe = max(L, 1e-6)
+    K_safe = max(K, 1e-6)
+    return A * (alpha * L_safe**(-rho) + (1 - alpha) * K_safe**(-rho))**(-1/rho)
+
+def marginal_products(L, K, A, alpha, rho):
+    """
+    Analytical marginal products for CES.
+    
+    MPL = ∂q/∂L = α·A^ρ·q^(1+ρ)·L^(-1-ρ)
+    MPK = ∂q/∂K = (1-α)·A^ρ·q^(1+ρ)·K^(-1-ρ)
+    """
+    L_safe = max(L, 1e-6)
+    K_safe = max(K, 1e-6)
+    q = ces_production(L_safe, K_safe, A, alpha, rho)
+    
+    MPL = alpha * (A**rho) * (q**(1 + rho)) * (L_safe**(-1 - rho))
+    MPK = (1 - alpha) * (A**rho) * (q**(1 + rho)) * (K_safe**(-1 - rho))
+    
+    return MPL, MPK
 
 def profit_function(L, K, p, w, phi, r, c_m, A, alpha, rho, C_fixed):
     """Compute profit: π = p·q − w·φ·L − r·K − c_m·q − C_fixed"""
@@ -1409,93 +1426,142 @@ def profit_function(L, K, p, w, phi, r, c_m, A, alpha, rho, C_fixed):
     material_cost = c_m * q
     return revenue - labor_cost - capital_cost - material_cost - C_fixed
 
+def lagrangian_focs(vars, A, alpha, rho, w, phi, r, p, c_m, q_min):
+    """
+    Lagrangian first-order conditions.
+    
+    Variables: [L, K, λ]
+    
+    FOCs:
+        1. ∂L/∂L = (p - c_m)·MPL - wφ + λ·MPL = 0
+        2. ∂L/∂K = (p - c_m)·MPK - r + λ·MPK = 0
+        3. ∂L/∂λ = q(L,K) - q_min = 0
+    """
+    L, K, lam = vars
+    
+    # Enforce positivity
+    L = max(L, 1e-6)
+    K = max(K, 1e-6)
+    
+    q = ces_production(L, K, A, alpha, rho)
+    MPL, MPK = marginal_products(L, K, A, alpha, rho)
+    
+    # Net marginal revenue (p - material cost)
+    p_net = p - c_m
+    
+    # FOC for labor
+    foc_L = p_net * MPL - w * phi + lam * MPL
+    
+    # FOC for capital
+    foc_K = p_net * MPK - r + lam * MPK
+    
+    # Production constraint (equality if binding)
+    foc_lambda = q - q_min
+    
+    return [foc_L, foc_K, foc_lambda]
+
 def compute_ces_optimum(A, alpha, rho, w, phi, r, p, c_m, q_min, C_fixed, tol=1e-6):
     """
-    Solve constrained optimization: maximize profit subject to q >= q_min.
+    Solve constrained optimization using Lagrangian method.
     Returns: (L_opt, K_opt, q_opt, profit_opt, lambda_opt, success, residuals)
     """
-    # Initial guess: scale from q_min
-    # Rough estimate: assume L and K are balanced
-    if rho == 0:
-        # Cobb-Douglas: q = A * L^alpha * K^(1-alpha)
-        # For initial guess, set L = K = sqrt(q_min / A) roughly
-        L_init = max(1000, np.sqrt(q_min / A) * 1.5)
-        K_init = max(10000, np.sqrt(q_min / A) * 1.5)
-    else:
-        L_init = max(1000, (q_min / A) ** (1.0 / (1 - rho)) * 1.5)
-        K_init = max(10000, (q_min / A) ** (1.0 / (1 - rho)) * 1.5)
+    def negative_profit(x):
+        """For scipy.minimize"""
+        return -profit_function(x[0], x[1], p, w, phi, r, c_m, A, alpha, rho, C_fixed)
     
-    def objective(x):
-        L, K = x[0], x[1]
-        return -profit_function(L, K, p, w, phi, r, c_m, A, alpha, rho, C_fixed)
-    
-    def constraint(x):
-        L, K = x[0], x[1]
-        q = ces_production(L, K, A, alpha, rho)
-        return q - q_min  # q >= q_min means q - q_min >= 0
-    
-    # Bounds: positive values
-    bounds = [(100, 1e6), (1000, 1e7)]
-    
-    # Constraint
-    constraints = [{'type': 'ineq', 'fun': constraint}]
-    
+    # Step 1: Unconstrained optimum
     try:
-        result = minimize(objective, [L_init, K_init], method='SLSQP', 
-                         bounds=bounds, constraints=constraints, 
-                         options={'ftol': tol, 'maxiter': 1000})
+        result_unconstrained = minimize(
+            negative_profit,
+            x0=[10000, 2000000],
+            bounds=[(100, 100000), (10000, 20000000)],
+            method='L-BFGS-B',
+            options={'ftol': 1e-12}
+        )
         
-        if result.success:
-            L_opt, K_opt = result.x
+        L_uncon, K_uncon = result_unconstrained.x
+        q_uncon = ces_production(L_uncon, K_uncon, A, alpha, rho)
+        
+        # Step 2: Lagrangian solution (constraint may bind)
+        if q_uncon >= q_min:
+            initial_guess = [L_uncon, K_uncon, 0.0]  # Start with λ=0
+        else:
+            initial_guess = [15000, 3000000, 10.0]   # Start with λ>0
+        
+        # Wrap lagrangian_focs for fsolve
+        def lagrangian_wrapper(vars):
+            return lagrangian_focs(vars, A, alpha, rho, w, phi, r, p, c_m, q_min)
+        
+        solution = fsolve(
+            lagrangian_wrapper,
+            x0=initial_guess,
+            full_output=True,
+            xtol=1e-10
+        )
+        
+        L_opt, K_opt, lambda_opt = solution[0]
+        info = solution[1]
+        
+        # Validate solution
+        q_opt = ces_production(L_opt, K_opt, A, alpha, rho)
+        profit_opt = profit_function(L_opt, K_opt, p, w, phi, r, c_m, A, alpha, rho, C_fixed)
+        residuals_list = lagrangian_wrapper([L_opt, K_opt, lambda_opt])
+        max_residual = max(abs(r) for r in residuals_list)
+        
+        # Check if constraint binds
+        constraint_binds = abs(q_opt - q_min) < 1.0  # Within 1 unit
+        
+        # Compute FOC residuals for validation
+        MPL_opt, MPK_opt = marginal_products(L_opt, K_opt, A, alpha, rho)
+        p_net = p - c_m
+        
+        labor_condition_lhs = p_net * MPL_opt - w * phi
+        labor_condition_rhs = -lambda_opt * MPL_opt
+        labor_error = abs(labor_condition_lhs - labor_condition_rhs)
+        
+        capital_condition_lhs = p_net * MPK_opt - r
+        capital_condition_rhs = -lambda_opt * MPK_opt
+        capital_error = abs(capital_condition_lhs - capital_condition_rhs)
+        
+        residuals = {
+            'foc_L': labor_error,
+            'foc_K': capital_error,
+            'constraint': abs(q_opt - q_min),
+            'max_residual': max_residual,
+            'constraint_binds': constraint_binds
+        }
+        
+        return (L_opt, K_opt, q_opt, profit_opt, lambda_opt, True, residuals)
+        
+    except Exception as e:
+        # Fallback: Direct constrained optimization
+        try:
+            L_init = max(1000, (q_min / A) ** (1.0 / (1 - rho)) * 1.5) if rho != 0 else max(1000, np.sqrt(q_min / A) * 1.5)
+            K_init = max(10000, (q_min / A) ** (1.0 / (1 - rho)) * 1.5) if rho != 0 else max(10000, np.sqrt(q_min / A) * 1.5)
+            
+            def constraint(x):
+                L, K = x[0], x[1]
+                q = ces_production(L, K, A, alpha, rho)
+                return q - q_min
+            
+            result_constrained = minimize(
+                negative_profit,
+                x0=[L_init, K_init],
+                bounds=[(100, 100000), (10000, 20000000)],
+                constraints={'type': 'eq', 'fun': constraint},
+                method='SLSQP',
+                options={'ftol': 1e-12}
+            )
+            
+            L_opt, K_opt = result_constrained.x
             q_opt = ces_production(L_opt, K_opt, A, alpha, rho)
             profit_opt = profit_function(L_opt, K_opt, p, w, phi, r, c_m, A, alpha, rho, C_fixed)
+            lambda_opt = None  # Not available
             
-            # Compute shadow price (Lagrange multiplier)
-            # Approximate using marginal profit change when output constraint is slightly relaxed
-            # If constraint is binding, lambda = d(profit)/d(q_min) when q_min increases
-            lambda_approx = 0.0
-            if abs(q_opt - q_min) < 1.0:  # Constraint is binding (within 1 unit)
-                # Estimate by perturbing L and K slightly to see profit change
-                # When constraint binds, increasing q_min by dq reduces profit by lambda * dq
-                # We can estimate by finding how profit changes when we're forced to produce more
-                delta_q = max(q_opt * 0.001, 1.0)  # Small perturbation
-                # Try to find L, K that produce q_opt + delta_q and see profit change
-                # Use Newton-like step: if q = f(L,K), to get q + dq, we need dL, dK such that
-                # dq ≈ (dq/dL)*dL + (dq/dK)*dK
-                h = 0.01
-                dq_dL = (ces_production(L_opt + h, K_opt, A, alpha, rho) - ces_production(L_opt - h, K_opt, A, alpha, rho)) / (2 * h)
-                dq_dK = (ces_production(L_opt, K_opt + h, A, alpha, rho) - ces_production(L_opt, K_opt - h, A, alpha, rho)) / (2 * h)
-                
-                # Simple approximation: if we need to increase q by delta_q, adjust L proportionally
-                if abs(dq_dL) > 1e-6:
-                    dL_approx = delta_q / dq_dL
-                    L_test = L_opt + dL_approx
-                    q_test = ces_production(L_test, K_opt, A, alpha, rho)
-                    if abs(q_test - q_opt - delta_q) < abs(q_test - q_opt):  # We got closer to q_opt + delta_q
-                        profit_test = profit_function(L_test, K_opt, p, w, phi, r, c_m, A, alpha, rho, C_fixed)
-                        if abs(q_test - q_opt) > 1e-6:
-                            lambda_approx = (profit_opt - profit_test) / (q_test - q_opt)
-            
-            # Compute first-order condition residuals
-            # FOC: dπ/dL = 0, dπ/dK = 0
-            # dπ/dL = p * dq/dL - w*phi - c_m * dq/dL = (p - c_m) * dq/dL - w*phi
-            # dπ/dK = p * dq/dK - r - c_m * dq/dK = (p - c_m) * dq/dK - r
-            
-            # Numerical derivatives
-            h = 1.0
-            dq_dL = (ces_production(L_opt + h, K_opt, A, alpha, rho) - ces_production(L_opt - h, K_opt, A, alpha, rho)) / (2 * h)
-            dq_dK = (ces_production(L_opt, K_opt + h, A, alpha, rho) - ces_production(L_opt, K_opt - h, A, alpha, rho)) / (2 * h)
-            
-            foc_L = (p - c_m) * dq_dL - w * phi
-            foc_K = (p - c_m) * dq_dK - r
-            
-            residuals = {'foc_L': abs(foc_L), 'foc_K': abs(foc_K), 'constraint': abs(q_opt - q_min)}
-            
-            return (L_opt, K_opt, q_opt, profit_opt, lambda_approx, True, residuals)
-        else:
-            return (None, None, None, None, None, False, {})
-    except Exception as e:
-        return (None, None, None, None, None, False, {'error': str(e)})
+            residuals = {'foc_L': 0, 'foc_K': 0, 'constraint': abs(q_opt - q_min), 'error': str(e)}
+            return (L_opt, K_opt, q_opt, profit_opt, lambda_opt, True, residuals)
+        except Exception as e2:
+            return (None, None, None, None, None, False, {'error': str(e2)})
 
 def compute_shadow_price(L, K, A, alpha, rho, p, c_m, w, phi, r, q_min, C_fixed, delta=0.01):
     """Compute shadow price by finite difference approximation."""
@@ -1948,6 +2014,13 @@ def build_engine_params_from_ui(detail_level, ui_values, excel_overrides=None):
             size_tb_for_calc = get_val('size_tb', 5.0)
             
             # Calculate from legacy parameters if available
+            # Default values (fallback if legacy params not available)
+            default_annual_labeling_cost = 2340.0  # Typical labeling cost
+            default_data_ops_total = 3780.0  # Typical storage + ETL cost
+            default_annual_mlops_cost = 25200.0  # Typical MLOps cost
+            default_annual_capital_cost = 51429.0  # Typical annualized CAPEX
+            default_total_ai_costs = 86769.0  # Sum of defaults
+            
             if all(v is not None for v in [w_val, tau_val, phi_val, n_labels_val]):
                 annual_labeling_cost_calc = w_val * tau_val * n_labels_val * phi_val
             else:
@@ -1972,6 +2045,7 @@ def build_engine_params_from_ui(detail_level, ui_values, excel_overrides=None):
         
         # If still None, use default
         if total_ai_costs is None:
+            default_total_ai_costs = 86769.0  # Sum of component defaults
             total_ai_costs = ui_values.get('total_ai_costs', default_total_ai_costs)
         
         size_tb = get_val('size_tb', ui_values.get('size_tb', 5.0))
@@ -2435,85 +2509,145 @@ def render_parameter_ui() -> Params:
                             
                             # Map Excel values to Params object
                             def map_excel_to_params(excel_vals: Dict, params: Params) -> Params:
-                                """Map Excel values directly to Params object."""
-                                # Use the same mapping logic as map_ui_to_params
-                                if 'w_before' in excel_vals:
-                                    params.wage_usd_per_hour_before = float(excel_vals['w_before'])
-                                if 'w_after' in excel_vals:
-                                    params.wage_usd_per_hour_after = float(excel_vals['w_after'])
-                                if 'phi_before' in excel_vals:
-                                    params.overhead_multiplier_before = float(excel_vals['phi_before'])
-                                if 'phi_after' in excel_vals:
-                                    params.overhead_multiplier_after = float(excel_vals['phi_after'])
-                                if 'scrap_rate_before' in excel_vals:
-                                    params.scrap_rate_before = float(excel_vals['scrap_rate_before'])
-                                if 'scrap_rate_after' in excel_vals:
-                                    params.scrap_rate_after = float(excel_vals['scrap_rate_after'])
-                                if 'security_before' in excel_vals:
-                                    params.security_spend_usd_per_year_before = float(excel_vals['security_before'])
-                                if 'security_after' in excel_vals:
-                                    params.security_spend_usd_per_year_after = float(excel_vals['security_after'])
-                                if 'capex_before' in excel_vals:
-                                    params.capex_usd_before = float(excel_vals['capex_before'])
-                                if 'useful_life_years_before' in excel_vals:
-                                    params.useful_life_years_before = float(excel_vals['useful_life_years_before'])
-                                if 'tau_before' in excel_vals:
-                                    params.labeling_time_hours_per_label_before = float(excel_vals['tau_before'])
-                                if 'n_labels_before' in excel_vals:
-                                    params.labels_per_year_before = int(excel_vals['n_labels_before'])
-                                if 'size_tb_before' in excel_vals:
-                                    params.dataset_tb_before = float(excel_vals['size_tb_before'])
-                                if 'cTB_yr_before' in excel_vals:
-                                    params.storage_usd_per_tb_year_before = float(excel_vals['cTB_yr_before'])
-                                if 'alpha_yr_before' in excel_vals:
-                                    params.etl_usd_per_tb_year_before = float(excel_vals['alpha_yr_before'])
-                                if 'beta_ops_yr_before' in excel_vals:
-                                    params.mlops_usd_per_model_year_before = float(excel_vals['beta_ops_yr_before'])
-                                if 'n_models_before' in excel_vals:
-                                    params.models_deployed_before = int(excel_vals['n_models_before'])
-                                if 'tau_after' in excel_vals:
-                                    params.labeling_time_hours_per_label_after = float(excel_vals['tau_after'])
-                                if 'n_labels_after' in excel_vals:
-                                    params.labels_per_year_after = int(excel_vals['n_labels_after'])
-                                if 'size_tb_after' in excel_vals:
-                                    params.dataset_tb_after = float(excel_vals['size_tb_after'])
-                                if 'cTB_yr_after' in excel_vals:
-                                    params.storage_usd_per_tb_year_after = float(excel_vals['cTB_yr_after'])
-                                if 'alpha_yr_after' in excel_vals:
-                                    params.etl_usd_per_tb_year_after = float(excel_vals['alpha_yr_after'])
-                                if 'beta_ops_yr_after' in excel_vals:
-                                    params.mlops_usd_per_model_year_after = float(excel_vals['beta_ops_yr_after'])
-                                if 'n_models_after' in excel_vals:
-                                    params.models_deployed_after = int(excel_vals['n_models_after'])
-                                if 'capex_after' in excel_vals:
-                                    params.capex_usd_after = float(excel_vals['capex_after'])
-                                if 'useful_life_years_after' in excel_vals:
-                                    params.useful_life_years_after = float(excel_vals['useful_life_years_after'])
-                                if 'units_per_year' in excel_vals:
-                                    params.units_per_year = float(excel_vals['units_per_year'])
-                                if 'material_cost_per_unit' in excel_vals:
-                                    params.material_cost_usd_per_unit = float(excel_vals['material_cost_per_unit'])
-                                # Check both 'oee_rate' (UI key) and 'oee_improvement_rate' (legacy) and 'oee_improvement_fraction' (Excel name)
-                                if 'oee_rate' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_rate'])
-                                elif 'oee_improvement_rate' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_improvement_rate'])
-                                elif 'oee_improvement_fraction' in excel_vals:
-                                    params.oee_improvement_fraction = float(excel_vals['oee_improvement_fraction'])
-                                if 'downtime_hours_avoided' in excel_vals:
-                                    params.downtime_hours_avoided_per_year = float(excel_vals['downtime_hours_avoided'])
-                                if 'operating_hours_year' in excel_vals:
-                                    params.operating_hours_per_year = float(excel_vals['operating_hours_year'])
-                                if 'cm_per_unit' in excel_vals:
-                                    params.contribution_margin_usd_per_unit = float(excel_vals['cm_per_unit'])
-                                if 'downtime_cost_per_hour' in excel_vals:
-                                    params.overhead_usd_per_downtime_hour = float(excel_vals['downtime_cost_per_hour'])
-                                if 'restart_scrap_fraction' in excel_vals:
-                                    params.restart_scrap_fraction = float(excel_vals['restart_scrap_fraction'])
-                                if 'eta' in excel_vals:
-                                    params.security_effectiveness_per_dollar = float(excel_vals['eta'])
-                                if 'L_breach_yr' in excel_vals:
-                                    params.breach_loss_envelope_usd = float(excel_vals['L_breach_yr'])
+                                """Map Excel values directly to Params object. Handles both new full names and legacy names."""
+                                # Helper to safely get and convert value
+                                def get_val(key, default=None):
+                                    if key in excel_vals:
+                                        try:
+                                            val = excel_vals[key]
+                                            if val is None or val == '':
+                                                return default
+                                            return float(val) if not isinstance(val, (int, float)) else val
+                                        except (ValueError, TypeError):
+                                            return default
+                                    return default
+                                
+                                # PAIRED COST PARAMETERS - Check both new full names and legacy names
+                                # Wage
+                                val = get_val('wage_usd_per_hour_before') or get_val('w_before')
+                                if val is not None:
+                                    params.wage_usd_per_hour_before = val
+                                val = get_val('wage_usd_per_hour_after') or get_val('w_after')
+                                if val is not None:
+                                    params.wage_usd_per_hour_after = val
+                                
+                                # Overhead
+                                val = get_val('overhead_multiplier_before') or get_val('phi_before')
+                                if val is not None:
+                                    params.overhead_multiplier_before = val
+                                val = get_val('overhead_multiplier_after') or get_val('phi_after')
+                                if val is not None:
+                                    params.overhead_multiplier_after = val
+                                
+                                # Scrap rate
+                                val = get_val('scrap_rate_before')
+                                if val is not None:
+                                    params.scrap_rate_before = val
+                                val = get_val('scrap_rate_after')
+                                if val is not None:
+                                    params.scrap_rate_after = val
+                                
+                                # Security spend
+                                val = get_val('security_spend_usd_per_year_before') or get_val('security_before')
+                                if val is not None:
+                                    params.security_spend_usd_per_year_before = val
+                                val = get_val('security_spend_usd_per_year_after') or get_val('security_after')
+                                if val is not None:
+                                    params.security_spend_usd_per_year_after = val
+                                
+                                # BEFORE-ONLY COSTS
+                                val = get_val('capex_usd_before') or get_val('capex_before')
+                                if val is not None:
+                                    params.capex_usd_before = val
+                                val = get_val('useful_life_years_before')
+                                if val is not None:
+                                    params.useful_life_years_before = val
+                                
+                                val = get_val('labeling_time_hours_per_label_before') or get_val('tau_before')
+                                if val is not None:
+                                    params.labeling_time_hours_per_label_before = val
+                                val = get_val('labels_per_year_before') or get_val('n_labels_before')
+                                if val is not None:
+                                    params.labels_per_year_before = int(val)
+                                val = get_val('dataset_tb_before') or get_val('size_tb_before')
+                                if val is not None:
+                                    params.dataset_tb_before = val
+                                val = get_val('storage_usd_per_tb_year_before') or get_val('cTB_yr_before')
+                                if val is not None:
+                                    params.storage_usd_per_tb_year_before = val
+                                val = get_val('etl_usd_per_tb_year_before') or get_val('alpha_yr_before')
+                                if val is not None:
+                                    params.etl_usd_per_tb_year_before = val
+                                val = get_val('mlops_usd_per_model_year_before') or get_val('beta_ops_yr_before')
+                                if val is not None:
+                                    params.mlops_usd_per_model_year_before = val
+                                val = get_val('models_deployed_before') or get_val('n_models_before')
+                                if val is not None:
+                                    params.models_deployed_before = int(val)
+                                
+                                # AFTER-ONLY COSTS
+                                val = get_val('labeling_time_hours_per_label_after') or get_val('tau_after')
+                                if val is not None:
+                                    params.labeling_time_hours_per_label_after = val
+                                val = get_val('labels_per_year_after') or get_val('n_labels_after') or get_val('n_labels')
+                                if val is not None:
+                                    params.labels_per_year_after = int(val)
+                                val = get_val('dataset_tb_after') or get_val('size_tb_after') or get_val('size_tb')
+                                if val is not None:
+                                    params.dataset_tb_after = val
+                                val = get_val('storage_usd_per_tb_year_after') or get_val('cTB_yr_after')
+                                if val is not None:
+                                    params.storage_usd_per_tb_year_after = val
+                                val = get_val('etl_usd_per_tb_year_after') or get_val('alpha_yr_after')
+                                if val is not None:
+                                    params.etl_usd_per_tb_year_after = val
+                                val = get_val('mlops_usd_per_model_year_after') or get_val('beta_ops_yr_after')
+                                if val is not None:
+                                    params.mlops_usd_per_model_year_after = val
+                                val = get_val('models_deployed_after') or get_val('n_models_after') or get_val('n_models')
+                                if val is not None:
+                                    params.models_deployed_after = int(val)
+                                val = get_val('capex_usd_after') or get_val('capex_after') or get_val('capex')
+                                if val is not None:
+                                    params.capex_usd_after = val
+                                val = get_val('useful_life_years_after')
+                                if val is not None:
+                                    params.useful_life_years_after = val
+                                
+                                # BENEFIT PARAMETERS
+                                val = get_val('oee_improvement_fraction') or get_val('oee_rate') or get_val('oee_improvement_rate')
+                                if val is not None:
+                                    params.oee_improvement_fraction = val
+                                val = get_val('downtime_hours_avoided_per_year') or get_val('downtime_hours_avoided')
+                                if val is not None:
+                                    params.downtime_hours_avoided_per_year = val
+                                val = get_val('overhead_usd_per_downtime_hour') or get_val('downtime_cost_per_hour')
+                                if val is not None:
+                                    params.overhead_usd_per_downtime_hour = val
+                                val = get_val('restart_scrap_fraction')
+                                if val is not None:
+                                    params.restart_scrap_fraction = val
+                                val = get_val('contribution_margin_usd_per_unit') or get_val('cm_per_unit')
+                                if val is not None:
+                                    params.contribution_margin_usd_per_unit = val
+                                
+                                # SHARED CONTEXT
+                                val = get_val('units_per_year')
+                                if val is not None:
+                                    params.units_per_year = val
+                                val = get_val('operating_hours_per_year') or get_val('operating_hours_year')
+                                if val is not None:
+                                    params.operating_hours_per_year = val
+                                val = get_val('material_cost_usd_per_unit') or get_val('material_cost_per_unit')
+                                if val is not None:
+                                    params.material_cost_usd_per_unit = val
+                                val = get_val('breach_loss_envelope_usd') or get_val('L_breach_yr')
+                                if val is not None:
+                                    params.breach_loss_envelope_usd = val
+                                val = get_val('security_effectiveness_per_dollar') or get_val('eta')
+                                if val is not None:
+                                    params.security_effectiveness_per_dollar = val
+                                
                                 return params
                             
                             # Map Excel values to Params
@@ -2844,10 +2978,9 @@ def render_parameter_ui() -> Params:
     return p
 
 # ============================================================================
-# SIDEBAR: CALL NEW PARAMETER UI
+# SIDEBAR: PARAMETER UI REMOVED (not affecting calculations)
 # ============================================================================
-with st.sidebar:
-    params = render_parameter_ui()
+# Parameters are now only used for the AI Operational Benefits chart on Net Value page
 
 # ============================================================================
 # PAGE NAVIGATION
@@ -2868,7 +3001,6 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
-
 st.markdown('<p class="main-header">🚗 BMW AI Implementation Analysis</p>', unsafe_allow_html=True)
 st.markdown('<p class="subheader">Module-level Automotive Manufacturing • Cost & Benefit Model</p>', unsafe_allow_html=True)
 
@@ -2889,58 +3021,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-col_nav1, col_nav2, col_nav3, col_nav4, col_nav5, col_nav6, col_nav7 = st.columns(7)
+col_nav1, col_nav2, col_nav3 = st.columns(3)
 
 # Initialize page state if not exists
 if 'page' not in st.session_state:
-    st.session_state.page = 1
+    st.session_state.page = 4
 
 with col_nav1:
-    page1 = st.button("📊 Cost Analysis", use_container_width=True, type="primary" if st.session_state.get('page') == 1 else "secondary", key="nav_page1")
-    if page1:
-        st.session_state.page = 1
-        st.rerun()
-
-with col_nav2:
-    page2 = st.button("✨ Benefit Analysis", use_container_width=True, type="primary" if st.session_state.get('page') == 2 else "secondary", key="nav_page2")
-    if page2:
-        st.session_state.page = 2
-        st.rerun()
-
-with col_nav3:
-    page3 = st.button("💹 Net Value", use_container_width=True, type="primary" if st.session_state.get('page') == 3 else "secondary", key="nav_page3")
-    if page3:
-        st.session_state.page = 3
-        st.rerun()
-
-with col_nav4:
-    page4 = st.button("📖 Parameters", use_container_width=True, type="primary" if st.session_state.get('page') == 4 else "secondary", key="nav_page4")
+    page4 = st.button("💹 Net Value", use_container_width=True, type="primary" if st.session_state.get('page') == 4 else "secondary", key="nav_page4")
     if page4:
         st.session_state.page = 4
         st.rerun()
 
-with col_nav5:
-    page5 = st.button("📈 Validation", use_container_width=True, type="primary" if st.session_state.get('page') == 5 else "secondary", key="nav_page5")
-    if page5:
-        st.session_state.page = 5
+with col_nav2:
+    page3 = st.button("🔒 Breach Risk", use_container_width=True, type="primary" if st.session_state.get('page') == 3 else "secondary", key="nav_page3")
+    if page3:
+        st.session_state.page = 3
         st.rerun()
 
-with col_nav6:
-    page6 = st.button("🔒 Breach Risk", use_container_width=True, type="primary" if st.session_state.get('page') == 6 else "secondary", key="nav_page6")
-    if page6:
-        st.session_state.page = 6
-        st.rerun()
-
-with col_nav7:
-    page7 = st.button("⚙️ Operations Optimization", use_container_width=True, type="primary" if st.session_state.get('page') == 7 else "secondary", key="nav_page7")
-    if page7:
-        st.session_state.page = 7
+with col_nav3:
+    page2 = st.button("📖 Parameters", use_container_width=True, type="primary" if st.session_state.get('page') == 2 else "secondary", key="nav_page2")
+    if page2:
+        st.session_state.page = 2
         st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Get current page (already initialized above in navigation section)
-current_page = st.session_state.get('page', 1)
+current_page = st.session_state.get('page', 4)
 
 st.markdown("---")
 
@@ -3105,667 +3213,9 @@ def show_symbol_mapping():
         """)
 
 # ============================================================================
-# PAGE 1: COST ANALYSIS
+# PAGE 2: PARAMETER DEFINITIONS & MODEL EXPLANATION
 # ============================================================================
-if current_page == 1:
-    st.markdown("## 📊 Cost Analysis")
-    st.markdown("Annual cost breakdown: Before AI vs. After AI implementation")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### Cost Comparison")
-        # Before: capital, risk, materials
-        before_categories = ["Capital", "Risk", "Materials"]
-        before_values = [
-            cost_before_breakdown.get("capital", 0),
-            cost_before_breakdown.get("risk", 0),
-            cost_before_breakdown.get("scrap", 0)
-        ]
-        # After: capital, risk, materials, labeling, storage, etl, mlops
-        after_categories = ["Capital", "Risk", "Materials", "Labeling", "Storage", "ETL", "MLOps"]
-        after_values = [
-            cost_after_breakdown.get("capital", 0),
-            cost_after_breakdown.get("risk", 0),
-            cost_after_breakdown.get("scrap", 0),
-            cost_after_breakdown.get("labeling", 0),
-            cost_after_breakdown.get("storage", 0),
-            cost_after_breakdown.get("etl", 0),
-            cost_after_breakdown.get("mlops", 0)
-        ]
-        # Combine for grouped bar chart
-        all_categories = list(set(before_categories + after_categories))
-        # Map category names to breakdown dictionary keys
-        category_to_key = {
-            "Capital": "capital",
-            "Risk": "risk",
-            "Materials": "scrap",  # Display as "Materials" but use "scrap" key
-            "Labeling": "labeling",
-            "Storage": "storage",
-            "ETL": "etl",
-            "MLOps": "mlops"
-        }
-        before_values_full = [cost_before_breakdown.get(category_to_key.get(cat, cat.lower()), 0) for cat in all_categories]
-        after_values_full = [cost_after_breakdown.get(category_to_key.get(cat, cat.lower()), 0) for cat in all_categories]
-        
-        fig_cost = go.Figure()
-        fig_cost.add_trace(go.Bar(
-            name="Before AI",
-            x=all_categories,
-            y=before_values_full,
-            marker_color="#0066cc",
-            opacity=0.8
-        ))
-        fig_cost.add_trace(go.Bar(
-            name="After AI",
-            x=all_categories,
-            y=after_values_full,
-            marker_color="#00a86b",
-            opacity=0.8
-        ))
-        fig_cost.update_layout(
-            barmode="group",
-            height=450,
-            xaxis_title="Cost Category",
-            yaxis_title="Annual Cost ($)",
-            margin=dict(l=10, r=10, t=10, b=10),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12)
-        )
-        st.plotly_chart(fig_cost, use_container_width=True)
-    
-    with col2:
-        st.markdown("### Cost Summary")
-        cost_df = pd.DataFrame({
-            "Category": all_categories,
-            "Before AI": [f"${v:,.0f}" for v in before_values_full],
-            "After AI": [f"${v:,.0f}" for v in after_values_full],
-            "Change": [f"${a-b:,.0f}" for a, b in zip(after_values_full, before_values_full)]
-        })
-        st.dataframe(cost_df, use_container_width=True, hide_index=True)
-        
-        st.metric("Total Cost Before AI", f"${cost_before:,.0f}")
-        st.metric("Total Cost After AI", f"${cost_after:,.0f}")
-        st.metric("Incremental Cost", f"${incremental_cost:,.0f}")
-    
-    # Monte Carlo for cost uncertainty
-    st.markdown("### Cost Uncertainty Analysis")
-    col_btn1, col_btn2 = st.columns([1, 4])
-    with col_btn1:
-        run_cost_mc = st.button("Run Cost Monte Carlo", type="primary", use_container_width=True)
-    
-    if run_cost_mc or 'mc_results_cost' in st.session_state:
-        if run_cost_mc:
-            with st.spinner("Running Monte Carlo simulation..."):
-                mc_seed = st.session_state.get('mc_seed', 42)
-                mc_runs = st.session_state.get('mc_runs', 5000)
-                np.random.seed(int(mc_seed))
-                
-                def cost_sample(before_ai=True):
-                    p = sample_params()
-                    if before_ai:
-                        n_lab = actual_n_labels_before
-                        size = actual_size_tb_before
-                        n_mod = actual_n_models_before
-                        sec_spend = actual_security_before
-                        scrap_rate = actual_scrap_rate_before
-                        use_before = True
-                    else:
-                        n_lab = actual_n_labels_after
-                        size = actual_size_tb_after
-                        n_mod = actual_n_models_after
-                        sec_spend = actual_security_after
-                        scrap_rate = actual_scrap_rate_after
-                        use_before = False
-                    return total_cost_breakdown(n_lab, size, sec_spend, n_mod, scrap_rate, p=p, use_before=use_before)["total"]
-                
-                draws_before = np.array([cost_sample(True) for _ in range(int(mc_runs))])
-                draws_after = np.array([cost_sample(False) for _ in range(int(mc_runs))])
-                
-                # Store results in session state
-                st.session_state.mc_results_cost = {
-                    'draws_before': draws_before,
-                    'draws_after': draws_after
-                }
-        else:
-            # Use stored results
-            results = st.session_state.mc_results_cost
-            draws_before = results['draws_before']
-            draws_after = results['draws_after']
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Before AI - P50", f"${np.percentile(draws_before, 50):,.0f}")
-            st.metric("Before AI - P90", f"${np.percentile(draws_before, 90):,.0f}")
-        with col2:
-            st.metric("After AI - P50", f"${np.percentile(draws_after, 50):,.0f}")
-            st.metric("After AI - P90", f"${np.percentile(draws_after, 90):,.0f}")
-        with col3:
-            st.metric("Incremental Cost - P50", f"${np.percentile(draws_after - draws_before, 50):,.0f}")
-            st.metric("Incremental Cost - P90", f"${np.percentile(draws_after - draws_before, 90):,.0f}")
-        
-        fig_mc = go.Figure()
-        fig_mc.add_trace(go.Histogram(
-            x=draws_before,
-            nbinsx=40,
-            name="Before AI",
-            marker_color="#0066cc",
-            opacity=0.6
-        ))
-        fig_mc.add_trace(go.Histogram(
-            x=draws_after,
-            nbinsx=40,
-            name="After AI",
-            marker_color="#00a86b",
-            opacity=0.6
-        ))
-        fig_mc.update_layout(
-            barmode='overlay',
-            height=400,
-            xaxis_title="Annual Cost ($)",
-            yaxis_title="Frequency",
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12)
-        )
-        st.plotly_chart(fig_mc, use_container_width=True)
-    
-    # Equation Explanations at Bottom
-    st.markdown("---")
-    
-    # Simplified Version
-    with st.container():
-        st.markdown("""
-        <div style="background: #f0f7ff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc; margin-bottom: 1rem;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📐 Simplified: How We Calculate Incremental Cost")
-        
-        st.markdown("""
-        **Simple Equation:**
-        $$
-        \\text{Incremental Cost} = \\text{Cost After AI} - \\text{Cost Before AI}
-        $$
-        
-        **What this means:** This shows how much your costs change when you implement AI. If the number is positive, AI adds costs. If negative, AI reduces costs.
-        
-        **Total Cost Breakdown:**
-        $$
-        \\text{Total Cost} = \\text{Labeling} + \\text{Storage} + \\text{Operations} + \\text{Risk} + \\text{Material} + \\text{Capital}
-        $$
-        
-        **Why this matters:** We calculate incremental cost (the difference) instead of just showing total costs, because decision-makers need to see what changes when AI is added, not just the absolute numbers.
-        """)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Detailed Version
-    with st.container():
-        st.markdown("""
-        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📊 Detailed: Full Cost Model Equations")
-        
-        st.markdown("""
-        **Component Definitions:**
-        
-        - \\(C^{label}\\) = Annual labeling cost (labor × labels per year × time per label × overhead)
-        - \\(C^{store}\\) = Annual storage cost (dataset size × storage cost per TB-year)
-        - \\(C^{ops}\\) = Annual operations cost (data processing + ETL pipelines)
-        - \\(C^{risk}(S)\\) = Annual cyber risk cost (decreases with security spending \\(S\\))
-        - \\(C^{mat}(s)\\) = Annual material cost from scrap (scrap rate \\(s\\) × units × material cost)
-        - \\(C^{cap}\\) = Annual capital cost (CAPEX ÷ useful life years)
-        
-        **Total Cost Function:**
-        $$
-        C_{\\text{total}}(s, S) = C^{label} + C^{store} + C^{ops} + C^{risk}(S) + C^{mat}(s) + C^{cap}
-        $$
-        
-        **Before and After:**
-        $$
-        C_{\\text{before}} = C_{\\text{total}}(s_{\\text{before}}, S_{\\text{before}})
-        $$
-        $$
-        C_{\\text{after}} = C_{\\text{total}}(s_{\\text{after}}, S_{\\text{after}})
-        $$
-        
-        **Incremental Cost:**
-        $$
-        \\Delta C = C_{\\text{after}} - C_{\\text{before}}
-        $$
-        
-        **Why we use (Cost_after − Cost_before):** We use (Cost_after − Cost_before) to isolate the incremental cash impact of the AI program. The incremental framing isolates the change in annual run-rate costs after AI implementation. This cleanly separates the effects of (i) scrap rate changes, (ii) cyber spend/risk shifts, and (iii) any operations/storage/MLOps scaling—while holding constant the accounting treatment of capital via annualized depreciation. Stakeholders decide based on this change, not absolute totals.
-        """)
-    
-        show_symbol_mapping()
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown("### Equation")
-    st.latex(r"\text{Cost} \Delta = \text{Cost After} - \text{Cost Before}")
-    st.caption(f"**Cost After** = ${cost_after:,.0f} | **Cost Before** = ${cost_before:,.0f} | **Δ** = ${incremental_cost:,.0f}")
-    st.markdown("**Why we use (Cost_after − Cost_before):** We use (Cost_after − Cost_before) to isolate the incremental cash impact of the AI program.")
-
-# ============================================================================
-# PAGE 2: BENEFIT ANALYSIS
-# ============================================================================
-elif current_page == 2:
-    st.markdown("## ✨ Benefit Analysis")
-    st.markdown("Annual benefit breakdown from AI implementation")
-    
-    benefit_categories = ["OEE Improvement", "Downtime Avoidance", "Risk Reduction", "Scrap Reduction"]
-    benefit_values = [
-        benefits_breakdown.get("oee_improvement", 0),
-        benefits_breakdown.get("downtime_avoidance", 0),
-        benefits_breakdown.get("risk_reduction", 0),
-        benefits_breakdown.get("scrap_reduction", 0)
-    ]
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        fig_benefit = go.Figure()
-        fig_benefit.add_trace(go.Bar(
-            x=benefit_categories,
-            y=benefit_values,
-            marker_color="#0066cc",
-            opacity=0.8
-        ))
-        fig_benefit.update_layout(
-            height=450,
-            xaxis_title="Benefit Category",
-            yaxis_title="Annual Benefit ($)",
-            margin=dict(l=10, r=10, t=10, b=10),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12)
-        )
-        st.plotly_chart(fig_benefit, use_container_width=True)
-    
-    with col2:
-        st.markdown("### Benefit Summary")
-        benefit_df = pd.DataFrame({
-            "Category": benefit_categories,
-            "Annual Benefit": [f"${v:,.0f}" for v in benefit_values],
-            "% of Total": [f"{v/benefits*100:.1f}%" if benefits > 0 else "0%" for v in benefit_values]
-        })
-        st.dataframe(benefit_df, use_container_width=True, hide_index=True)
-        st.metric("Total Annual Benefits", f"${benefits:,.0f}")
-        
-        # Downtime breakdown
-        st.markdown("---")
-        st.markdown("#### Downtime Benefit Breakdown")
-        downtime_df = pd.DataFrame({
-            "Component": ["Cost per hour", "Hours avoided", "Total benefit"],
-            "Value": [
-                f"${benefits_breakdown['downtime_cost_per_hour']:,.2f}/hr",
-                f"{benefits_breakdown['downtime_hours_avoided']:,.0f} hrs",
-                f"${benefits_breakdown['downtime_avoidance']:,.0f}"
-            ]
-        })
-        st.dataframe(downtime_df, use_container_width=True, hide_index=True)
-    
-    # Equation Explanations at Bottom
-    st.markdown("---")
-    
-    # Simplified Version
-    with st.container():
-        st.markdown("""
-        <div style="background: #f0f7ff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc; margin-bottom: 1rem;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📐 Simplified: How We Calculate Benefits")
-        
-        st.markdown("""
-        **Simple Equation:**
-        $$
-        \\text{Total Benefits} = \\text{Scrap Savings} + \\text{Downtime Savings} + \\text{Performance Gains} + \\text{Risk Reduction}
-        $$
-        
-        **What each benefit means:**
-        
-        1. **Scrap Savings:** AI catches defects early, so you waste fewer materials. Savings = (old scrap rate - new scrap rate) × units produced × material cost per unit
-        
-        2. **Downtime Savings:** AI predicts when machines will break, so you fix them before they fail. Savings = hours of downtime avoided × cost per hour of downtime
-        
-        3. **Performance Gains (OEE):** AI optimizes production speed and quality. Savings = improvement percentage × units produced × profit margin per unit
-        
-        4. **Risk Reduction:** Better cybersecurity reduces the chance of data breaches. Savings = reduction in expected breach costs
-        
-        **Note:** Performance gains exclude unplanned downtime to avoid counting the same benefit twice.
-        """)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Detailed Version
-    with st.container():
-        st.markdown("""
-        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📊 Detailed: Full Benefit Model Equations")
-        
-        st.markdown("""
-        **Component Equations:**
-        
-        **Scrap Reduction Benefit:**
-        $$
-        B^{scrap} = (s_{\\text{before}} - s_{\\text{after}}) \\cdot U \\cdot m
-        $$
-        where \\(U\\) = units per year, \\(m\\) = material cost per unit
-        
-        **Downtime Avoidance Benefit:**
-        $$
-        B^{dt} = h_{dt} \\cdot C_{hr}^{dt}
-        $$
-        where \\(h_{dt}\\) = downtime hours avoided, and
-        $$
-        C_{hr}^{dt} = \\frac{U}{H} \\cdot CM + 15w\\phi + 0.02 \\cdot \\frac{U}{H} \\cdot m + 500
-        $$
-        where \\(H\\) = operating hours per year, \\(CM\\) = contribution margin per unit, \\(w\\) = wage, \\(\\phi\\) = overhead multiplier
-        
-        **OEE Improvement Benefit:**
-        $$
-        B^{OEE} = r_{OEE} \\cdot U \\cdot CM
-        $$
-        where \\(r_{OEE}\\) = OEE improvement rate (excludes unplanned downtime to avoid double counting with \\(B^{dt}\\))
-        
-        **Risk Reduction Benefit:**
-        $$
-        B^{risk} = C^{risk}(S_{\\text{before}}) - C^{risk}(S_{\\text{after}})
-        $$
-        where \\(C^{risk}(S) = L_{yr}^{breach} \\cdot e^{-\\eta S}\\) is the annual cyber risk cost, which decreases with security spending \\(S\\)
-        
-        **Total Benefits:**
-        $$
-        B_{\\text{total}} = B^{scrap} + B^{dt} + B^{OEE} + B^{risk}
-        $$
-        
-        **Rationale:** Each term maps to a physically different lever (quality, uptime, throughput, cyber). The decomposition allows stakeholders to understand which benefit drivers matter most. OEE excludes unplanned downtime to prevent overlap with \\(B^{dt}\\).
-        """)
-        
-        show_symbol_mapping()
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown("### Equation")
-    st.latex(r"\text{Benefits} = \Delta\text{OEE} \cdot u \cdot \text{CM} + H_{dt} \cdot c_{oh} + [L(S_b) - L(S_a)] + (s_{\text{before}} - s_{\text{after}}) \cdot u \cdot c_{mat}")
-    st.caption(f"**Total Benefits** = ${benefits:,.0f}")
-    st.markdown("Where:")
-    st.markdown("- $\\Delta\\text{OEE}$ = OEE improvement fraction")
-    st.markdown("- $u$ = Units per year")
-    st.markdown("- $\\text{CM}$ = Contribution margin per unit")
-    st.markdown("- $H_{dt}$ = Downtime hours avoided per year")
-    st.markdown("- $c_{oh}$ = Overhead cost per downtime hour")
-    st.markdown("- $L(S_b) - L(S_a)$ = Risk reduction (difference in expected breach loss)")
-    st.markdown("- $(s_{\\text{before}} - s_{\\text{after}})$ = Scrap rate reduction")
-
-# ============================================================================
-# PAGE 3: COMBINED NET VALUE
-# ============================================================================
-elif current_page == 3:
-    st.markdown("## 💹 Combined Net Value Analysis")
-    
-    # KPI Tiles
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            "💰 Net Annual Value",
-            f"${net_value:,.0f}",
-            delta=f"{net_value/incremental_cost*100:.1f}% ROI" if incremental_cost > 0 else None,
-            delta_color="normal" if net_value > 0 else "inverse"
-        )
-    
-    with col2:
-        st.metric("📈 Total Benefits", f"${benefits:,.0f}")
-    
-    with col3:
-        st.metric("📊 Incremental Cost", f"${incremental_cost:,.0f}")
-    
-    with col4:
-        roi_pct = (net_value / incremental_cost * 100) if incremental_cost > 0 else 0
-        st.metric("🎯 ROI", f"{roi_pct:.1f}%")
-    
-    st.markdown("---")
-    
-    # Benefits vs Costs Comparison Chart
-    st.markdown("### Benefits vs Incremental Costs Breakdown")
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
-        # Benefits breakdown
-        benefit_components = ["OEE Improvement", "Downtime Avoidance", "Risk Reduction", "Scrap Reduction"]
-        benefit_values_chart = [
-            benefits_breakdown.get("oee_improvement", 0),
-            benefits_breakdown.get("downtime_avoidance", 0),
-            benefits_breakdown.get("risk_reduction", 0),
-            benefits_breakdown.get("scrap_reduction", 0)
-        ]
-        
-        fig_benefits = go.Figure()
-        fig_benefits.add_trace(go.Bar(
-            x=benefit_components,
-            y=benefit_values_chart,
-            marker_color="#00a86b",
-            opacity=0.8,
-            text=[f"${v:,.0f}" for v in benefit_values_chart],
-            textposition="outside",
-            name="Benefits"
-        ))
-        fig_benefits.update_layout(
-            title="Total Benefits Breakdown",
-            height=400,
-            xaxis_title="Benefit Category",
-            yaxis_title="Annual Value ($)",
-            margin=dict(l=10, r=10, t=50, b=10),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12),
-            showlegend=False
-        )
-        st.plotly_chart(fig_benefits, use_container_width=True)
-        st.metric("Total Benefits", f"${benefits:,.0f}", delta=None)
-    
-    with col_chart2:
-        # Incremental costs breakdown (cost after - cost before components)
-        cost_components = ["Capital", "Risk", "Materials", "Labeling", "Storage", "ETL", "MLOps"]
-        cost_after_vals = [
-            cost_after_breakdown.get("capital", 0),
-            cost_after_breakdown.get("risk", 0),
-            cost_after_breakdown.get("scrap", 0),
-            cost_after_breakdown.get("labeling", 0),
-            cost_after_breakdown.get("storage", 0),
-            cost_after_breakdown.get("etl", 0),
-            cost_after_breakdown.get("mlops", 0)
-        ]
-        cost_before_vals = [
-            cost_before_breakdown.get("capital", 0),
-            cost_before_breakdown.get("risk", 0),
-            cost_before_breakdown.get("scrap", 0),
-            cost_before_breakdown.get("labeling", 0),
-            cost_before_breakdown.get("storage", 0),
-            cost_before_breakdown.get("etl", 0),
-            cost_before_breakdown.get("mlops", 0)
-        ]
-        incremental_cost_vals = [after - before for after, before in zip(cost_after_vals, cost_before_vals)]
-        
-        fig_costs = go.Figure()
-        fig_costs.add_trace(go.Bar(
-            x=cost_components,
-            y=incremental_cost_vals,
-            marker_color="#d62728",
-            opacity=0.8,
-            text=[f"${v:,.0f}" for v in incremental_cost_vals],
-            textposition="outside",
-            name="Incremental Costs"
-        ))
-        fig_costs.update_layout(
-            title="Incremental Costs Breakdown",
-            height=400,
-            xaxis_title="Cost Category",
-            yaxis_title="Annual Cost ($)",
-            margin=dict(l=10, r=10, t=50, b=10),
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12),
-            showlegend=False
-        )
-        st.plotly_chart(fig_costs, use_container_width=True)
-        st.metric("Total Incremental Cost", f"${incremental_cost:,.0f}", delta=None)
-    
-    # Net Value Comparison Chart
-    st.markdown("---")
-    st.markdown("### Net Value Impact")
-    fig_net_comparison = go.Figure()
-    
-    # Create a grouped bar chart showing Benefits, Incremental Costs, and Net Value
-    categories_net = ["Benefits", "Incremental Costs", "Net Value"]
-    values_net = [benefits, -incremental_cost, net_value]
-    colors_net = ["#00a86b", "#d62728", "#0066cc"]
-    
-    fig_net_comparison.add_trace(go.Bar(
-        x=categories_net,
-        y=values_net,
-        marker_color=colors_net,
-        opacity=0.8,
-        text=[f"${abs(v):,.0f}" if v < 0 else f"${v:,.0f}" for v in values_net],
-        textposition="outside",
-        name="Value"
-    ))
-    
-    # Add a horizontal line at zero
-    fig_net_comparison.add_hline(
-        y=0,
-        line_dash="dash",
-        line_color="gray",
-        opacity=0.5,
-        annotation_text="Break-even"
-    )
-    
-    fig_net_comparison.update_layout(
-        title="Benefits vs Costs: Net Value Analysis",
-        height=450,
-        xaxis_title="",
-        yaxis_title="Annual Value ($)",
-        margin=dict(l=10, r=10, t=50, b=10),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Inter", size=12),
-        showlegend=False
-    )
-    st.plotly_chart(fig_net_comparison, use_container_width=True)
-    
-    # Waterfall Chart (keep for detailed flow)
-    st.markdown("---")
-    st.markdown("### Net Value Waterfall")
-    fig_waterfall = go.Figure(go.Waterfall(
-        orientation="v",
-        measure=["relative", "absolute", "relative", "total"],
-        x=["Total Benefits", "Cost Before AI", "Cost After AI", "Net Value"],
-        y=[benefits, -cost_before, cost_after, net_value],
-        connector={"line": {"color": "rgb(63, 63, 63)"}},
-        increasing={"marker": {"color": "#00a86b"}},
-        decreasing={"marker": {"color": "#d62728"}},
-        totals={"marker": {"color": "#0066cc"}},
-        textposition="outside"
-    ))
-    fig_waterfall.update_layout(
-        height=450,
-        xaxis_title="",
-        yaxis_title="Value ($)",
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Inter", size=12)
-    )
-    st.plotly_chart(fig_waterfall, use_container_width=True)
-    
-    # Equation Explanations at Bottom
-    st.markdown("---")
-    
-    # Simplified Version
-    with st.container():
-        st.markdown("""
-        <div style="background: #f0f7ff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc; margin-bottom: 1rem;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📐 Simplified: How We Calculate Net Value")
-        
-        st.markdown("""
-        **Simple Equation:**
-        $$
-        \\text{Net Value} = \\text{Total Benefits} - \\text{Incremental Cost}
-        $$
-        
-        **What this means:** This is your bottom line—how much money you save (or lose) each year from implementing AI.
-        
-        - **If positive:** AI pays for itself and generates savings
-        - **If negative:** AI costs more than it saves
-        
-        **Breaking it down:**
-        - **Total Benefits** = All the money you save from scrap reduction, downtime avoidance, performance improvements, and risk reduction
-        - **Incremental Cost** = The additional costs you incur after implementing AI (cost after - cost before)
-        
-        **Example:** If benefits = $1,000,000 and incremental cost = $300,000, then net value = $700,000 per year.
-        """)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Detailed Version
-    with st.container():
-        st.markdown("""
-        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc;">
-        """, unsafe_allow_html=True)
-        
-        st.markdown("### 📊 Detailed: Full Net Value Equation")
-        
-        st.markdown("""
-        **Net Value Calculation:**
-        $$
-        \\text{Net} = B_{\\text{total}} - (C_{\\text{after}} - C_{\\text{before}})
-        $$
-        
-        where
-        
-        **Total Benefits:**
-        $$
-        B_{\\text{total}} = B^{scrap} + B^{dt} + B^{OEE} + B^{risk}
-        $$
-        
-        **Cost Before AI:**
-        $$
-        C_{\\text{before}} = C_{\\text{total}}(s_{\\text{before}}, S_{\\text{before}})
-        $$
-        
-        **Cost After AI:**
-        $$
-        C_{\\text{after}} = C_{\\text{total}}(s_{\\text{after}}, S_{\\text{after}})
-        $$
-        
-        where \\(C_{\\text{total}}(s, S) = C^{label} + C^{store} + C^{ops} + C^{risk}(S) + C^{mat}(s) + C^{cap}\\) is the total cost function.
-        
-        **Rationale:** Net value represents the annual financial impact of AI implementation. Positive values indicate that benefits exceed incremental costs, justifying the investment. This metric is used for ROI calculations and decision-making.
-        """)
-        
-        show_symbol_mapping()
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown("### Equation")
-    st.latex(r"\text{Net Value} = \text{Benefits} - (\text{Cost After} - \text{Cost Before})")
-    st.caption(f"**Benefits** = ${benefits:,.0f} | **Cost After** = ${cost_after:,.0f} | **Cost Before** = ${cost_before:,.0f} | **Net Value** = ${net_value:,.0f}")
-    st.markdown("**Full equation:** Net Value = Benefits − (Cost_after − Cost_before)")
-
-# ============================================================================
-# PAGE 4: PARAMETER DEFINITIONS & MODEL EXPLANATION
-# ============================================================================
-elif current_page == 4:
+if current_page == 2:
     st.markdown("## 📖 Parameter Definitions & Model Explanation")
     
     st.markdown("""
@@ -3806,11 +3256,1249 @@ elif current_page == 4:
     3. **OEE Improvement**: OEE gain × units × contribution margin
     4. **Risk Reduction**: Reduction in expected breach loss due to improved security spending
     """)
+    
+    # ============================================================================
+    # COST-BENEFIT EQUATIONS (FULL SIMPLE AND DETAILED VERSIONS)
+    # ============================================================================
+    st.markdown("---")
+    st.markdown("## 📐 Cost-Benefit Equations")
+    
+    # Simplified Version
+    with st.container():
+        st.markdown("""
+        <div style="background: #f0f7ff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc; margin-bottom: 1rem;">
+        """, unsafe_allow_html=True)
+        
+        st.markdown("### 📐 Simplified: Full Cost-Benefit Equation")
+        
+        st.markdown("""
+        **Simple Equation:**
+        $$
+        \\text{Net Value} = \\text{Total Benefits} - \\text{Incremental Cost}
+        $$
+        
+        where:
+        - **Total Benefits** = OEE Improvement + Downtime Avoidance + Risk Reduction + Scrap Reduction
+        - **Incremental Cost** = Cost After AI - Cost Before AI
+        
+        **What this means:** This is your bottom line—how much money you save (or lose) each year from implementing AI.
+        
+        - **If positive:** AI pays for itself and generates savings
+        - **If negative:** AI costs more than it saves
+        
+        **Example:** If benefits = $1,000,000 and incremental cost = $300,000, then net value = $700,000 per year.
+        """)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Detailed Version
+    with st.container():
+        st.markdown("""
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0066cc;">
+        """, unsafe_allow_html=True)
+        
+        st.markdown("### 📊 Detailed: Full Cost-Benefit Model Equations")
+        
+        st.markdown("""
+        **Net Value Calculation:**
+        $$
+        \\text{Net} = B_{\\text{total}} - (C_{\\text{after}} - C_{\\text{before}})
+        $$
+        
+        **Total Benefits:**
+        $$
+        B_{\\text{total}} = B^{scrap} + B^{dt} + B^{OEE} + B^{risk}
+        $$
+        
+        where:
+        - \\(B^{scrap} = (s_{\\text{before}} - s_{\\text{after}}) \\cdot U \\cdot m\\) = Scrap reduction benefit
+        - \\(B^{dt} = h_{dt} \\cdot C_{hr}^{dt}\\) = Downtime avoidance benefit
+        - \\(B^{OEE} = r_{OEE} \\cdot U \\cdot CM\\) = OEE improvement benefit
+        - \\(B^{risk} = C^{risk}(S_{\\text{before}}) - C^{risk}(S_{\\text{after}})\\) = Risk reduction benefit
+        
+        **Cost Before AI:**
+        $$
+        C_{\\text{before}} = C_{\\text{total}}(s_{\\text{before}}, S_{\\text{before}})
+        $$
+        
+        **Cost After AI:**
+        $$
+        C_{\\text{after}} = C_{\\text{total}}(s_{\\text{after}}, S_{\\text{after}})
+        $$
+        
+        where \\(C_{\\text{total}}(s, S) = C^{label} + C^{store} + C^{ops} + C^{risk}(S) + C^{mat}(s) + C^{cap}\\) is the total cost function.
+        
+        **Component Definitions:**
+        - \\(C^{label}\\) = Annual labeling cost (labor × labels per year × time per label × overhead)
+        - \\(C^{store}\\) = Annual storage cost (dataset size × storage cost per TB-year)
+        - \\(C^{ops}\\) = Annual operations cost (data processing + ETL pipelines)
+        - \\(C^{risk}(S)\\) = Annual cyber risk cost (decreases with security spending \\(S\\))
+        - \\(C^{mat}(s)\\) = Annual material cost from scrap (scrap rate \\(s\\) × units × material cost)
+        - \\(C^{cap}\\) = Annual capital cost (CAPEX ÷ useful life years)
+        
+        **Rationale:** Net value represents the annual financial impact of AI implementation. Positive values indicate that benefits exceed incremental costs, justifying the investment. This metric is used for ROI calculations and decision-making.
+        """)
+        
+        show_symbol_mapping()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### Final Equation")
+    st.latex(r"\text{Net Value} = \text{Benefits} - (\text{Cost After} - \text{Cost Before})")
+    st.caption(f"**Benefits** = ${benefits:,.0f} | **Cost After** = ${cost_after:,.0f} | **Cost Before** = ${cost_before:,.0f} | **Net Value** = ${net_value:,.0f}")
+    st.markdown("**Full equation:** Net Value = Benefits − (Cost_after − Cost_before)")
 
 # ============================================================================
-# PAGE 5: STATISTICAL VALIDATION
+# PAGE 3: DATA BREACH RISK VALUATION
 # ============================================================================
-elif current_page == 5:
+elif current_page == 3:
+    st.markdown("## 🔒 Data Breach Risk Valuation")
+    st.markdown("Monte Carlo-based estimation of expected annual data breach losses")
+    
+    # Model Parameters
+    st.markdown("### Model Parameters")
+    
+    col_param1, col_param2, col_param3 = st.columns(3)
+    
+    with col_param1:
+        breach_revenue = st.number_input(
+            "Annual Revenue ($ billions)",
+            min_value=1.0,
+            max_value=1000.0,
+            value=142.6,
+            step=1.0,
+            help="Firm's annual revenue in $ billions. Used for size-adjusted breach probability.",
+            key="breach_revenue"
+        )
+    
+    with col_param2:
+        breach_rating = st.selectbox(
+            "Security Rating",
+            options=['A', 'B+', 'B', 'C'],
+            index=1,  # Default to B+
+            help="Security rating from SecurityScorecard. Lower ratings indicate higher breach risk.",
+            key="breach_rating"
+        )
+    
+    with col_param3:
+        breach_p_l_correlation = st.slider(
+            "P-L Correlation",
+            min_value=0.0,
+            max_value=0.5,
+            value=0.25,
+            step=0.05,
+            help="Correlation between breach probability and impact magnitude. Higher values indicate that weaker security correlates with larger impacts.",
+            key="breach_p_l_corr"
+        )
+    
+    col_sim1, col_sim2 = st.columns(2)
+    
+    with col_sim1:
+        breach_n_simulations = st.number_input(
+            "Monte Carlo Simulations",
+            min_value=10000,
+            max_value=1000000,
+            value=250000,
+            step=25000,
+            help="Number of Monte Carlo simulation iterations. Higher values provide more accurate distributions but take longer.",
+            key="breach_n_sim"
+        )
+    
+    with col_sim2:
+        breach_seed = st.number_input(
+            "Random Seed",
+            min_value=0,
+            max_value=10000,
+            value=42,
+            help="Random seed for reproducibility.",
+            key="breach_seed"
+        )
+    
+    # Run simulation button
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        run_breach_sim = st.button("Run Risk Valuation", type="primary", use_container_width=True, key="run_breach_btn")
+    
+    # Initialize models
+    if run_breach_sim or 'breach_results' in st.session_state:
+        if run_breach_sim:
+            with st.spinner("Running data breach risk valuation..."):
+                np.random.seed(int(breach_seed))
+                
+                # Initialize models
+                breach_model = BreachProbabilityModel()
+                impact_model = ImpactEstimationModel()
+                mc_valuation = MonteCarloValuation(
+                    breach_model=breach_model,
+                    impact_model=impact_model,
+                    p_l_correlation=breach_p_l_correlation
+                )
+                
+                # Run simulation
+                results = mc_valuation.run_simulation(
+                    revenue=breach_revenue,
+                    rating=breach_rating,
+                    n_simulations=int(breach_n_simulations)
+                )
+                
+                # Store results
+                st.session_state.breach_results = results
+        else:
+            results = st.session_state.breach_results
+        
+        # Display Results
+        st.markdown("---")
+        st.markdown("### Valuation Results")
+        
+        # KPI Cards
+        col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+        
+        with col_kpi1:
+            st.metric("Expected Annual Loss", f"${results['expected_value']:.1f}M")
+        with col_kpi2:
+            st.metric("Standard Deviation", f"${results['std_dev']:.1f}M")
+        with col_kpi3:
+            st.metric("95th Percentile", f"${results['percentile_95']:.1f}M")
+        with col_kpi4:
+            p_breach_mean = results['components']['p_breach'][0]
+            st.metric("Breach Probability", f"{p_breach_mean:.2%}")
+        
+        # Distribution Visualization
+        st.markdown("---")
+        st.markdown("### Loss Distribution")
+        
+        loss_dist = results['expected_loss_distribution']
+        
+        # Histogram
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(
+            x=loss_dist,
+            nbinsx=100,
+            name="Expected Loss Distribution",
+            marker_color='#0066cc',
+            opacity=0.7
+        ))
+        
+        # Add percentile lines
+        fig_hist.add_vline(
+            x=results['percentile_50'],
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Median: ${results['percentile_50']:.1f}M"
+        )
+        fig_hist.add_vline(
+            x=results['percentile_95'],
+            line_dash="dash",
+            line_color="orange",
+            annotation_text=f"95th %ile: ${results['percentile_95']:.1f}M"
+        )
+        
+        fig_hist.update_layout(
+            title="Expected Annual Data Breach Loss Distribution",
+            xaxis_title="Expected Loss ($ millions)",
+            yaxis_title="Probability Density",
+            height=500,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Inter", size=12)
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+        
+        # Cumulative Distribution
+        sorted_losses = np.sort(loss_dist)
+        cumulative = np.arange(1, len(sorted_losses) + 1) / len(sorted_losses)
+        
+        fig_cdf = go.Figure()
+        fig_cdf.add_trace(go.Scatter(
+            x=sorted_losses,
+            y=cumulative,
+            mode='lines',
+            name='Cumulative Distribution',
+            line=dict(color='#0066cc', width=2)
+        ))
+        fig_cdf.add_hline(
+            y=0.95,
+            line_dash="dash",
+            line_color="orange",
+            annotation_text="95% VaR"
+        )
+        fig_cdf.update_layout(
+            title="Cumulative Distribution Function",
+            xaxis_title="Expected Loss ($ millions)",
+            yaxis_title="Cumulative Probability",
+            height=400,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Inter", size=12)
+        )
+        st.plotly_chart(fig_cdf, use_container_width=True)
+        
+        # Statistics Table
+        st.markdown("---")
+        st.markdown("### Risk Statistics")
+        
+        stats_data = {
+            'Metric': [
+                'Expected Value',
+                'Standard Deviation',
+                '5th Percentile (VaR 95%)',
+                '25th Percentile',
+                '50th Percentile (Median)',
+                '75th Percentile',
+                '95th Percentile (Tail Risk)',
+                '95% Confidence Interval (Lower)',
+                '95% Confidence Interval (Upper)',
+                'Breach Probability (Mean)',
+                'Breach Probability (Std Dev)',
+                'Conditional Impact (Mean)',
+                'Conditional Impact (Std Dev)',
+                'P-L Correlation'
+            ],
+            'Value': [
+                f"${results['expected_value']:.2f}M",
+                f"${results['std_dev']:.2f}M",
+                f"${results['percentile_5']:.2f}M",
+                f"${results['percentile_25']:.2f}M",
+                f"${results['percentile_50']:.2f}M",
+                f"${results['percentile_75']:.2f}M",
+                f"${results['percentile_95']:.2f}M",
+                f"${results['confidence_interval_95'][0]:.2f}M",
+                f"${results['confidence_interval_95'][1]:.2f}M",
+                f"{results['components']['p_breach'][0]:.4f} ({results['components']['p_breach'][0]:.2%})",
+                f"{results['components']['p_breach'][1]:.4f}",
+                f"${results['components']['l_impact'][0]:.2f}M",
+                f"${results['components']['l_impact'][1]:.2f}M",
+                f"{results['actual_correlation']:.3f}"
+            ]
+        }
+        
+        stats_df = pd.DataFrame(stats_data)
+        st.dataframe(stats_df, use_container_width=True, hide_index=True)
+        
+        # Component Breakdown
+        st.markdown("---")
+        st.markdown("### Component Breakdown")
+        
+        col_comp1, col_comp2 = st.columns(2)
+        
+        with col_comp1:
+            st.markdown("#### Breach Probability Components")
+            breach_model = BreachProbabilityModel()
+            p_results = breach_model.combined_probability_estimation(breach_revenue, breach_rating)
+            
+            comp_data = {
+                'Component': ['Size-Adjusted', 'Rating-Based', 'Combined (Precision-Weighted)'],
+                'Probability': [
+                    f"{p_results['components']['size_adjusted'][0]:.4f}",
+                    f"{p_results['components']['rating_adjusted'][0]:.4f}",
+                    f"{p_results['expected']:.4f}"
+                ],
+                'Std Dev': [
+                    f"{p_results['components']['size_adjusted'][1]:.4f}",
+                    f"{p_results['components']['rating_adjusted'][1]:.4f}",
+                    f"{p_results['std_dev']:.4f}"
+                ]
+            }
+            comp_df = pd.DataFrame(comp_data)
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        
+        with col_comp2:
+            st.markdown("#### Impact Estimation Components")
+            impact_model = ImpactEstimationModel()
+            l_results = impact_model.combined_impact_estimation(breach_revenue)
+            
+            impact_data = {
+                'Source': ['Benchmark (IBM-Ponemon)', 'Insurance-Implied', 'Combined (Weighted)'],
+                'Expected ($M)': [
+                    f"{l_results['components']['benchmark']['expected']:.1f}",
+                    f"{l_results['components']['insurance_implied']['expected']:.1f}",
+                    f"{l_results['expected']:.1f}"
+                ],
+                'Std Dev ($M)': [
+                    f"{l_results['components']['benchmark']['std_dev']:.1f}",
+                    f"{l_results['components']['insurance_implied']['std_dev']:.1f}",
+                    f"{l_results['std_dev']:.1f}"
+                ]
+            }
+            impact_df = pd.DataFrame(impact_data)
+            st.dataframe(impact_df, use_container_width=True, hide_index=True)
+        
+        # Validation against Benchmarks
+        st.markdown("---")
+        st.markdown("### Benchmark Validation")
+        
+        validation = validate_against_benchmarks(
+            expected_loss=results['expected_value'],
+            revenue=breach_revenue,
+            p_breach=results['components']['p_breach'][0]
+        )
+        
+        val_data = {
+            'Check': list(validation.keys()),
+            'Estimate': [f"{validation[k]['estimate']:.4f}" for k in validation.keys()],
+            'Benchmark Range': [str(validation[k]['benchmark_range']) for k in validation.keys()],
+            'Status': ['✅ PASS' if validation[k]['pass'] else '❌ FAIL' for k in validation.keys()],
+            'Source': [validation[k]['source'] for k in validation.keys()]
+        }
+        val_df = pd.DataFrame(val_data)
+        st.dataframe(val_df, use_container_width=True, hide_index=True)
+        
+        # Sensitivity Analysis
+        st.markdown("---")
+        st.markdown("### Sensitivity Analysis")
+        
+        sensitivity = sensitivity_analysis(
+            breach_model=breach_model,
+            impact_model=impact_model,
+            base_revenue=breach_revenue,
+            base_rating=breach_rating,
+            p_l_correlation=breach_p_l_correlation
+        )
+        
+        base_expected = sensitivity['Base Case']['expected']
+        
+        # Tornado Chart
+        scenarios = []
+        deviations = []
+        for scenario, vals in sensitivity.items():
+            if scenario != 'Base Case':
+                deviation = vals['expected'] - base_expected
+                scenarios.append(scenario)
+                deviations.append(deviation)
+        
+        # Sort by absolute deviation
+        sorted_data = sorted(zip(scenarios, deviations), key=lambda x: abs(x[1]), reverse=True)
+        scenarios_sorted = [s[0] for s in sorted_data]
+        deviations_sorted = [s[1] for s in sorted_data]
+        colors = ['red' if d < 0 else 'green' for d in deviations_sorted]
+        
+        fig_tornado = go.Figure()
+        fig_tornado.add_trace(go.Bar(
+            y=scenarios_sorted,
+            x=deviations_sorted,
+            orientation='h',
+            marker_color=colors,
+            opacity=0.7,
+            text=[f"${d:+.1f}M" for d in deviations_sorted],
+            textposition='outside'
+        ))
+        fig_tornado.add_vline(x=0, line_width=2, line_color="black")
+        fig_tornado.update_layout(
+            title="Sensitivity Analysis: Impact on Expected Loss",
+            xaxis_title="Change in Expected Loss ($ millions)",
+            yaxis_title="Scenario",
+            height=400,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Inter", size=12)
+        )
+        st.plotly_chart(fig_tornado, use_container_width=True)
+        
+        # Sensitivity Table
+        sens_data = {
+            'Scenario': list(sensitivity.keys()),
+            'Expected Loss ($M)': [f"{sensitivity[k]['expected']:.1f}" for k in sensitivity.keys()],
+            'Std Dev ($M)': [f"{sensitivity[k]['std_dev']:.1f}" for k in sensitivity.keys()],
+            '95% CI Lower ($M)': [f"{sensitivity[k]['ci_95'][0]:.1f}" for k in sensitivity.keys()],
+            '95% CI Upper ($M)': [f"{sensitivity[k]['ci_95'][1]:.1f}" for k in sensitivity.keys()],
+            'Breach Prob.': [f"{sensitivity[k]['p_breach']:.4f}" for k in sensitivity.keys()],
+            'Impact ($M)': [f"{sensitivity[k]['l_impact']:.1f}" for k in sensitivity.keys()]
+        }
+        sens_df = pd.DataFrame(sens_data)
+        st.dataframe(sens_df, use_container_width=True, hide_index=True)
+        
+        # Risk Management Implications
+        st.markdown("---")
+        st.markdown("### Risk Management Implications")
+        
+        expected_loss = results['expected_value']
+        tail_risk = results['percentile_95']
+        
+        st.info(f"""
+        **Capital Allocation:** Consider ${expected_loss:.0f}M annual reserve for data risk
+        
+        **Insurance Coverage:** Target ${tail_risk:.0f}M+ for catastrophic protection
+        
+        **Security Investment:** Justified up to ${expected_loss:.0f}M annually for risk reduction
+        
+        **Risk Appetite:** {breach_rating} rating implies {p_breach_mean:.1%} annual breach probability
+        """)
+    
+    else:
+        st.info("👆 Click 'Run Risk Valuation' to perform the analysis.")
+
+# ============================================================================
+# PAGE 4: NET VALUE (COMBINED WITH OPERATIONS OPTIMIZATION)
+# ============================================================================
+elif current_page == 4:
+    st.markdown("## 💹 Net Value")
+    st.markdown("**Complete cost-benefit analysis with operations optimization.**")
+    
+    # Adjustable Parameters Section
+    st.markdown("### 🎛️ Adjustable Parameters")
+    with st.expander("📥 Adjust AI Operational Benefits Parameters", expanded=True):
+        # Excel Import Section
+        col_import1, col_import2 = st.columns([2, 1])
+        
+        with col_import1:
+            uploaded_file = st.file_uploader(
+                "📊 Import Parameters from Excel",
+                type=['xlsx', 'xls'],
+                key="benefits_excel_upload",
+                help="Upload an Excel file with Parameter and Value columns"
+            )
+        
+        with col_import2:
+            # Create and download template
+            template_data = {
+                'Parameter': [
+                    'OEE Improvement',
+                    'Downtime Avoidance',
+                    'Scrap Reduction',
+                    'Energy Savings',
+                    'Workers Comp Reduction',
+                    'Annual AI Costs'
+                ],
+                'Value': [
+                    1035000,
+                    2000000,
+                    250125,
+                    319200,
+                    19866,
+                    570425
+                ]
+            }
+            template_df = pd.DataFrame(template_data)
+            
+            # Convert to Excel bytes
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                template_df.to_excel(writer, index=False, sheet_name='Parameters')
+            excel_bytes = output.getvalue()
+            
+            st.download_button(
+                "📥 Download Template",
+                excel_bytes,
+                file_name="AI_Operational_Benefits_Template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_benefits_template"
+            )
+        
+        # Default values (will be overridden by Excel if uploaded)
+        default_values = {
+            'OEE Improvement': 1035000,
+            'Downtime Avoidance': 2000000,
+            'Scrap Reduction': 250125,
+            'Energy Savings': 319200,
+            'Workers Comp Reduction': 19866,
+            'Annual AI Costs': 570425
+        }
+        
+        # Parse Excel file if uploaded (only process new files)
+        if uploaded_file is not None:
+            # Track file ID to avoid reprocessing
+            current_file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else id(uploaded_file)
+            last_processed_id = st.session_state.get('last_benefits_excel_file_id')
+            
+            # Only process if this is a new file
+            if current_file_id != last_processed_id:
+                try:
+                    # Read Excel file
+                    df = pd.read_excel(uploaded_file, engine='openpyxl')
+                    
+                    # Check format: Parameter | Value columns
+                    if 'Parameter' in df.columns and 'Value' in df.columns:
+                        param_dict = dict(zip(df['Parameter'], df['Value']))
+                    # Alternative: first two columns
+                    elif len(df.columns) >= 2:
+                        param_dict = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+                    else:
+                        st.error("❌ Excel format not recognized. Expected 'Parameter' and 'Value' columns.")
+                        param_dict = {}
+                    
+                    # Update default values with Excel values
+                    for param_name, value in param_dict.items():
+                        # Clean parameter name (remove extra spaces, case insensitive matching)
+                        param_name_clean = str(param_name).strip()
+                        for key in default_values.keys():
+                            if param_name_clean.lower() == key.lower():
+                                try:
+                                    default_values[key] = float(value)
+                                except (ValueError, TypeError):
+                                    st.warning(f"⚠️ Invalid value for {key}: {value}")
+                    
+                    # Store file ID to prevent reprocessing
+                    st.session_state.last_benefits_excel_file_id = current_file_id
+                    st.success("✅ Excel file loaded successfully!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error reading Excel file: {str(e)}")
+        
+        # Store values in session state for persistence
+        if 'benefits_oee' not in st.session_state:
+            st.session_state.benefits_oee = default_values['OEE Improvement']
+        if 'benefits_downtime' not in st.session_state:
+            st.session_state.benefits_downtime = default_values['Downtime Avoidance']
+        if 'benefits_scrap' not in st.session_state:
+            st.session_state.benefits_scrap = default_values['Scrap Reduction']
+        if 'benefits_energy' not in st.session_state:
+            st.session_state.benefits_energy = default_values['Energy Savings']
+        if 'benefits_workers_comp' not in st.session_state:
+            st.session_state.benefits_workers_comp = default_values['Workers Comp Reduction']
+        if 'benefits_ai_costs' not in st.session_state:
+            st.session_state.benefits_ai_costs = default_values['Annual AI Costs']
+        
+        # Update session state if Excel was loaded
+        if uploaded_file is not None:
+            st.session_state.benefits_oee = default_values['OEE Improvement']
+            st.session_state.benefits_downtime = default_values['Downtime Avoidance']
+            st.session_state.benefits_scrap = default_values['Scrap Reduction']
+            st.session_state.benefits_energy = default_values['Energy Savings']
+            st.session_state.benefits_workers_comp = default_values['Workers Comp Reduction']
+            st.session_state.benefits_ai_costs = default_values['Annual AI Costs']
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Gross Benefits (USD/year)")
+            oee_benefit = st.number_input(
+                "OEE Improvement", 
+                min_value=0, 
+                max_value=10000000, 
+                value=int(st.session_state.benefits_oee), 
+                step=10000,
+                key="oee_benefit"
+            )
+            downtime_benefit = st.number_input(
+                "Downtime Avoidance", 
+                min_value=0, 
+                max_value=10000000, 
+                value=int(st.session_state.benefits_downtime), 
+                step=10000,
+                key="downtime_benefit"
+            )
+            scrap_benefit = st.number_input(
+                "Scrap Reduction", 
+                min_value=0, 
+                max_value=10000000, 
+                value=int(st.session_state.benefits_scrap), 
+                step=10000,
+                key="scrap_benefit"
+            )
+        
+        with col2:
+            st.markdown("#### Gross Benefits (continued)")
+            energy_benefit = st.number_input(
+                "Energy Savings", 
+                min_value=0, 
+                max_value=10000000, 
+                value=int(st.session_state.benefits_energy), 
+                step=10000,
+                key="energy_benefit"
+            )
+            workers_comp_benefit = st.number_input(
+                "Workers Comp Reduction", 
+                min_value=0, 
+                max_value=10000000, 
+                value=int(st.session_state.benefits_workers_comp), 
+                step=1000,
+                key="workers_comp_benefit"
+            )
+            st.markdown("---")
+            ai_costs_annual = st.number_input(
+                "Annual AI Costs", 
+                min_value=0, 
+                max_value=5000000, 
+                value=int(st.session_state.benefits_ai_costs), 
+                step=10000,
+                key="ai_costs_annual",
+                help="Total annual cost of AI implementation"
+            )
+        
+        # Update session state when values change
+        st.session_state.benefits_oee = oee_benefit
+        st.session_state.benefits_downtime = downtime_benefit
+        st.session_state.benefits_scrap = scrap_benefit
+        st.session_state.benefits_energy = energy_benefit
+        st.session_state.benefits_workers_comp = workers_comp_benefit
+        st.session_state.benefits_ai_costs = ai_costs_annual
+    
+    st.markdown("---")
+    
+    # AI Operational Benefits: Gross vs Net chart
+    st.markdown("#### AI Operational Benefits: Gross vs Net")
+    categories_benefits = ['OEE Improvement', 'Downtime Avoidance', 'Scrap Reduction', 
+                          'Energy Savings', 'Workers Comp Reduction']
+    benefits_values = [oee_benefit, downtime_benefit, scrap_benefit, energy_benefit, workers_comp_benefit]
+    net_benefits_values = [b - (ai_costs_annual/len(categories_benefits)) for b in benefits_values]
+    
+    fig_benefits = go.Figure()
+    fig_benefits.add_trace(go.Bar(
+        x=categories_benefits,
+        y=[b/1000 for b in benefits_values],
+        name='Gross Benefits',
+        marker_color='#2ecc71',
+        opacity=0.7,
+        text=[f'${b/1000:.0f}K' for b in benefits_values],
+        textposition='outside'
+    ))
+    fig_benefits.add_trace(go.Bar(
+        x=categories_benefits,
+        y=[b/1000 for b in net_benefits_values],
+        name='Net Benefits',
+        marker_color='#3498db',
+        text=[f'${b/1000:.0f}K' for b in net_benefits_values],
+        textposition='outside'
+    ))
+    fig_benefits.update_layout(
+        title='AI Operational Benefits: Gross vs Net (Excluding Risk Reduction)',
+        xaxis_title='Benefit Category',
+        yaxis_title='Value (Thousand $)',
+        barmode='group',
+        height=450,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        font=dict(family="Inter", size=12),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+    )
+    st.plotly_chart(fig_benefits, use_container_width=True)
+    
+    st.markdown("---")
+    
+    st.markdown("""
+    **THEORY:**
+    - max π = pq - wφL - rK - material·q - C_fixed
+    - s.t. q = A[αL^(-ρ) + (1-α)K^(-ρ)]^(-1/ρ) ≥ q_min
+    
+    **Lagrangian:** L = π(L,K) + λ[q(L,K) - q_min]
+    
+    **FOCs:**
+    - ∂L/∂L: (p - c_m)·MPL - wφ + λ·MPL = 0
+    - ∂L/∂K: (p - c_m)·MPK - r + λ·MPK = 0
+    - ∂L/∂λ: q(L,K) - q_min = 0  (if binding)
+    
+    **Economic interpretation:**
+    - λ = shadow price of production constraint ($/unit)
+    - λ > 0 → constraint binds (produce exactly q_min)
+    - λ = 0 || λ < 0 → unconstrained optimum dominates
+    """)
+    
+    # Inputs panel with notebook defaults
+    with st.expander("📥 Inputs (USD)", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### CES Production Parameters")
+            A = st.number_input("A (Total factor productivity)", 0.1, 100.0, 1.2, 0.1, key="ces_A",
+                               help="TFP scaled to dollar inputs (Oberfield & Raval 2021)")
+            alpha_ces = st.number_input("α (Labor share parameter)", 0.01, 0.99, 0.60, 0.01, key="ces_alpha",
+                                       help="Labor distribution weight")
+            rho = st.number_input("ρ (Substitution parameter)", -0.99, 0.99, 0.43, 0.01, key="ces_rho",
+                                 help="σ = 0.70, capital-labor complements (Oberfield & Raval 2021)")
+            
+            st.markdown("#### Cost Parameters")
+            w = st.number_input("w: Wage ($/hr)", 10.0, 200.0, 31.0, 1.0, key="ces_w")
+            phi = st.number_input("φ: Overhead multiplier", 1.0, 3.0, 1.35, 0.1, key="ces_phi")
+            r = st.number_input("r: Capital rate (annual)", 0.01, 0.50, 0.15, 0.01, key="ces_r",
+                               help="Annual cost of capital as fraction (industry standard)")
+            material_cost = st.number_input("Material cost ($/unit)", 50.0, 1000.0, 725.0, 10.0, key="ces_cm")
+            selling_price = st.number_input("Selling price ($/unit)", 100.0, 2000.0, 1460.0, 10.0, key="ces_p")
+            
+        with col2:
+            st.markdown("#### Constraint & Fixed Costs")
+            q_min = st.number_input("q_min: Minimum output (units/year)", 1000, 1000000, 100000, 1000, key="ces_qmin")
+            
+            st.markdown("#### AI/Data Costs (USD/year)")
+            tau = st.number_input("τ: Labeling time (hr/point)", 0.001, 0.1, 0.0065, 0.0001, key="ces_tau")
+            n_labels = st.number_input("Labels per year", 1000.0, 100000.0, 12000.0, 1000.0, key="ces_nlabels")
+            TB = st.number_input("Dataset size (TB)", 1.0, 100.0, 5.0, 0.5, key="ces_tb")
+            n_models = st.number_input("Number of models", 1.0, 10.0, 3.0, 1.0, key="ces_nmodels")
+            cTB_yr = st.number_input("Storage cost ($/TB-yr)", 100.0, 1000.0, 325.0, 10.0, key="ces_ctb")
+            alpha_yr = st.number_input("ETL cost ($/TB-yr)", 100.0, 2000.0, 650.0, 10.0, key="ces_alpha_yr")
+            beta_ops_yr = st.number_input("MLOps cost ($/model-yr)", 5000.0, 50000.0, 19000.0, 1000.0, key="ces_beta")
+            
+            st.markdown("#### Capital & Risk")
+            capex = st.number_input("Capital expenditure ($)", 100000.0, 10000000.0, 1000000.0, 100000.0, key="ces_capex")
+            useful_life_years = st.number_input("Useful life (years)", 1.0, 20.0, 8.75, 0.25, key="ces_life")
+            L_breach_baseline = st.number_input("Expected annual loss pre-AI ($)", 10000.0, 1000000.0, 390000.0, 10000.0, key="ces_breach")
+            risk_reduction_rate = st.number_input("AI-driven risk reduction", 0.0, 1.0, 0.425, 0.01, key="ces_risk_reduction")
+    
+    # Calculate fixed costs
+    C_label = tau * n_labels * w * phi
+    C_store = cTB_yr * TB
+    C_ops = alpha_yr * TB + beta_ops_yr * n_models
+    C_cap_annual = capex / useful_life_years
+    risk_after_AI = L_breach_baseline * (1 - risk_reduction_rate)
+    C_fixed = C_label + C_store + C_ops + risk_after_AI + C_cap_annual
+    
+    # Compute optimization
+    st.markdown("---")
+    st.markdown("### 📊 Optimization Results")
+    
+    # Step 1: Unconstrained optimum
+    st.markdown("#### [1] Unconstrained Optimum (λ = 0)")
+    
+    def negative_profit(x):
+        return -profit_function(x[0], x[1], selling_price, w, phi, r, material_cost, A, alpha_ces, rho, C_fixed)
+    
+    result_unconstrained = minimize(
+        negative_profit,
+        x0=[10000, 2000000],
+        bounds=[(100, 100000), (10000, 20000000)],
+        method='L-BFGS-B',
+        options={'ftol': 1e-12}
+    )
+    
+    L_uncon, K_uncon = result_unconstrained.x
+    q_uncon = ces_production(L_uncon, K_uncon, A, alpha_ces, rho)
+    profit_uncon = profit_function(L_uncon, K_uncon, selling_price, w, phi, r, material_cost, A, alpha_ces, rho, C_fixed)
+    
+    col_uncon1, col_uncon2, col_uncon3, col_uncon4 = st.columns(4)
+    with col_uncon1:
+        st.metric("Labor", f"{L_uncon:,.0f} hours")
+    with col_uncon2:
+        st.metric("Capital", f"${K_uncon:,.0f}")
+    with col_uncon3:
+        st.metric("Output", f"{q_uncon:,.0f} units")
+    with col_uncon4:
+        st.metric("Profit", f"${profit_uncon:,.0f}")
+    
+    constraint_status = "✅ SATISFIED" if q_uncon >= q_min else "❌ VIOLATED"
+    st.caption(f"Constraint: {constraint_status} (q ≥ {q_min:,.0f})")
+    
+    # Step 2: Lagrangian solution
+    st.markdown("---")
+    st.markdown("#### [2] Lagrangian Solution (constraint enforced)")
+    
+    result = compute_ces_optimum(A, alpha_ces, rho, w, phi, r, selling_price, material_cost, q_min, C_fixed)
+    L_opt, K_opt, q_opt, profit_opt, lambda_opt, success, residuals = result
+    
+    if success and L_opt is not None:
+        col_opt1, col_opt2, col_opt3, col_opt4 = st.columns(4)
+        with col_opt1:
+            st.metric("Labor", f"{L_opt:,.0f} hours")
+        with col_opt2:
+            st.metric("Capital", f"${K_opt:,.0f}")
+        with col_opt3:
+            st.metric("Output", f"{q_opt:,.0f} units")
+        with col_opt4:
+            st.metric("Profit", f"${profit_opt:,.0f}")
+        
+        if lambda_opt is not None:
+            st.metric("λ (shadow price)", f"${lambda_opt:,.4f} per unit",
+                     help="Marginal value of relaxing the minimum production constraint by one unit")
+            constraint_binds = residuals.get('constraint_binds', False)
+            st.caption(f"Max FOC residual: {residuals.get('max_residual', 0):.2e} | Constraint: {'BINDING' if constraint_binds else 'SLACK'}")
+        
+        # Validation Tests
+        st.markdown("---")
+        st.markdown("### ✅ Validation Tests")
+        
+        if lambda_opt is not None:
+            MPL_opt, MPK_opt = marginal_products(L_opt, K_opt, A, alpha_ces, rho)
+            p_net = selling_price - material_cost
+            
+            labor_condition_lhs = p_net * MPL_opt - w * phi
+            labor_condition_rhs = -lambda_opt * MPL_opt
+            labor_error = abs(labor_condition_lhs - labor_condition_rhs)
+            
+            capital_condition_lhs = p_net * MPK_opt - r
+            capital_condition_rhs = -lambda_opt * MPK_opt
+            capital_error = abs(capital_condition_lhs - capital_condition_rhs)
+            
+            test_col1, test_col2, test_col3, test_col4 = st.columns(4)
+            
+            with test_col1:
+                test1_pass = labor_error < 1e-3
+                st.metric("Labor FOC Error", f"{labor_error:.2e}", "✅ PASS" if test1_pass else "❌ FAIL")
+            
+            with test_col2:
+                test2_pass = capital_error < 1e-3
+                st.metric("Capital FOC Error", f"{capital_error:.2e}", "✅ PASS" if test2_pass else "❌ FAIL")
+            
+            with test_col3:
+                constraint_error = abs(q_opt - q_min)
+                test3_pass = constraint_error < 10
+                st.metric("Constraint Error", f"{constraint_error:.2f} units", delta="✅ PASS" if test3_pass else "❌ FAIL")
+            
+            with test_col4:
+                capital_labor_ratio = K_opt / L_opt if L_opt > 0 else 0
+                test4_pass = 10 <= capital_labor_ratio <= 500
+                st.metric("K/L Ratio", f"${capital_labor_ratio:.2f}/hr", delta="✅ PASS" if test4_pass else "❌ FAIL")
+            
+            # Returns to scale
+            epsilon_L = (MPL_opt * L_opt) / q_opt
+            epsilon_K = (MPK_opt * K_opt) / q_opt
+            returns_to_scale = epsilon_L + epsilon_K
+            st.caption(f"Returns to Scale: Labor elasticity = {epsilon_L:.3f}, Capital elasticity = {epsilon_K:.3f}, Sum = {returns_to_scale:.3f} {'✓' if 0.95 <= returns_to_scale <= 1.05 else '✗'}")
+        
+        # Visualizations - Security Investment Effectiveness Dashboard
+        st.markdown("---")
+        st.markdown("### 📈 Security Investment Effectiveness Dashboard")
+        st.markdown("**AI-Enhanced Cybersecurity ROI Analysis**")
+        
+        # Parameters for security investment analysis
+        risk_baseline = 26_000_000  # Annual breach loss without AI ($) - from notebook
+        investment = 5_000_000  # AI implementation cost ($) - from notebook
+        total_net_benefit = 8_500_000  # Annual operational benefit from AI ($) - from notebook
+        
+        # Generate risk reduction range: 0% to 99%
+        risk_reduction_pct = np.linspace(0, 99, 100)
+        risk_reduction_frac = risk_reduction_pct / 100
+        
+        # Calculate metrics
+        risk_after = risk_baseline * (1 - risk_reduction_frac)
+        annual_investment_cost = investment / 5  # Assume 5-year amortization
+        risk_reduction_benefit = risk_baseline * (1 - risk_reduction_frac)
+        net_profit = total_net_benefit - risk_reduction_benefit - annual_investment_cost
+        roi = net_profit / investment
+        payback_years = np.where(net_profit > 0, investment / net_profit, np.inf)
+        
+        # Color palette (colorblind-safe)
+        COLOR_PROFIT = '#0173B2'      # Blue
+        COLOR_ROI = '#DE8F05'         # Orange
+        COLOR_PAYBACK = '#029E73'     # Green
+        COLOR_THRESHOLD = '#CC78BC'   # Purple
+        COLOR_DANGER = '#CA3542'      # Red
+        
+        # ============================================================================
+        # FIGURE 1: MULTI-PANEL DASHBOARD (Interactive Plotly)
+        # ============================================================================
+        
+        # Panel A: Net Annual Profit (full width on top)
+        st.markdown("#### Panel A: Net Annual Profit vs Security Investment Effectiveness")
+        fig_profit = go.Figure()
+        
+        # Profitable region fill
+        profit_positive = net_profit > 0
+        if np.any(profit_positive):
+            fig_profit.add_trace(go.Scatter(
+                x=risk_reduction_pct,
+                y=np.maximum(net_profit / 1e6, 0),
+                mode='none',
+                fill='tozeroy',
+                fillcolor='rgba(1, 115, 178, 0.2)',
+                name='Profitable region',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+        
+        # Loss region fill
+        profit_negative = net_profit <= 0
+        if np.any(profit_negative):
+            fig_profit.add_trace(go.Scatter(
+                x=risk_reduction_pct,
+                y=np.minimum(net_profit / 1e6, 0),
+                mode='none',
+                fill='tozeroy',
+                fillcolor='rgba(202, 53, 66, 0.2)',
+                name='Loss region',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+        
+        # Main line
+        fig_profit.add_trace(go.Scatter(
+            x=risk_reduction_pct,
+            y=net_profit / 1e6,
+            mode='lines+markers',
+            name='Net Profit',
+            line=dict(color=COLOR_PROFIT, width=2.5),
+            marker=dict(size=5, symbol='circle', color=COLOR_PROFIT),
+            showlegend=False,
+            hovertemplate='Effectiveness: %{x:.1f}%<br>Net Profit: $%{y:.2f}M<extra></extra>'
+        ))
+        
+        # Break-even point
+        breakeven_idx = np.argmin(np.abs(net_profit))
+        breakeven_pct = risk_reduction_pct[breakeven_idx]
+        fig_profit.add_vline(
+            x=breakeven_pct,
+            line_dash="dash",
+            line_color=COLOR_THRESHOLD,
+            line_width=1.5,
+            annotation_text=f'Break-even: {breakeven_pct:.1f}%',
+            annotation_position="top"
+        )
+        fig_profit.add_hline(y=0, line_dash="solid", line_color="black", line_width=0.8, opacity=0.5)
+        
+        # Annotations for key points
+        key_points = [0, 25, 50, 75, 95, 99]
+        for pct in key_points:
+            idx = int(pct)
+            if idx < len(net_profit):
+                fig_profit.add_annotation(
+                    x=pct,
+                    y=net_profit[idx] / 1e6,
+                    text=f'${net_profit[idx]/1e6:.1f}M',
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowcolor=COLOR_PROFIT,
+                    bgcolor='white',
+                    bordercolor=COLOR_PROFIT,
+                    borderwidth=1,
+                    font=dict(size=9, color='black', family='sans-serif')
+                )
+        
+        fig_profit.update_layout(
+            title=dict(text='Panel A: Net Annual Profit vs Security Investment Effectiveness', 
+                      font=dict(size=12, family='sans-serif', color='black')),
+            xaxis_title='Security Effectiveness (% Risk Reduction)',
+            yaxis_title='Net Annual Profit (Million $)',
+            height=400,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="sans-serif", size=11),
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, 
+                       bgcolor='rgba(255,255,255,0.9)', bordercolor='gray', borderwidth=1),
+            xaxis=dict(range=[-2, 101], gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True),
+            yaxis=dict(gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True)
+        )
+        st.plotly_chart(fig_profit, use_container_width=True)
+        
+        # Panel B and C side by side (on bottom)
+        col_b, col_c = st.columns(2)
+        
+        with col_b:
+            st.markdown("#### Panel B: ROI Sensitivity")
+            roi_clipped = np.clip(roi, -5, 10)
+            
+            fig_roi = go.Figure()
+            
+            # ROI > 1x region
+            roi_above_one = roi_clipped > 1
+            if np.any(roi_above_one):
+                fig_roi.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.maximum(roi_clipped, np.ones_like(roi_clipped)),
+                    mode='none',
+                    fill='tonexty',
+                    fillcolor='rgba(222, 143, 5, 0.2)',
+                    name='ROI > 1x (profitable)',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+                fig_roi.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.ones_like(roi_clipped),
+                    mode='none',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # ROI < 1x region
+            roi_below_one = roi_clipped <= 1
+            if np.any(roi_below_one):
+                fig_roi.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.ones_like(roi_clipped),
+                    mode='none',
+                    fill='tonexty',
+                    fillcolor='rgba(202, 53, 66, 0.2)',
+                    name='ROI < 1x (loss)',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+                fig_roi.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.minimum(roi_clipped, np.ones_like(roi_clipped)),
+                    mode='none',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # Main line
+            fig_roi.add_trace(go.Scatter(
+                x=risk_reduction_pct,
+                y=roi_clipped,
+                mode='lines+markers',
+                name='ROI',
+                line=dict(color=COLOR_ROI, width=2.5),
+                marker=dict(size=5, symbol='square', color=COLOR_ROI),
+                showlegend=False,
+                hovertemplate='Effectiveness: %{x:.1f}%<br>ROI: %{y:.2f}x<extra></extra>'
+            ))
+            
+            # Threshold lines
+            fig_roi.add_hline(y=1, line_dash="dash", line_color=COLOR_THRESHOLD, line_width=1.5,
+                            annotation_text='ROI = 1x (break-even)', annotation_position="right")
+            fig_roi.add_hline(y=3, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+            fig_roi.add_hline(y=5, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+            fig_roi.add_annotation(x=98, y=3.2, text='3x', showarrow=False, 
+                                  font=dict(size=8, color='gray', family='sans-serif'))
+            fig_roi.add_annotation(x=98, y=5.2, text='5x', showarrow=False, 
+                                  font=dict(size=8, color='gray', family='sans-serif'))
+            
+            fig_roi.update_layout(
+                title=dict(text='Panel B: ROI Sensitivity', 
+                          font=dict(size=12, family='sans-serif', color='black')),
+                xaxis_title='Security Effectiveness (%)',
+                yaxis_title='Return on Investment (×)',
+                height=400,
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(family="sans-serif", size=11),
+                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                           bgcolor='rgba(255,255,255,0.9)', bordercolor='gray', borderwidth=1, font=dict(size=8)),
+                xaxis=dict(range=[-2, 101], gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True),
+                yaxis=dict(range=[-5.5, 10.5], gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True)
+            )
+            st.plotly_chart(fig_roi, use_container_width=True)
+        
+        with col_c:
+            st.markdown("#### Panel C: Investment Payback Period")
+            payback_clipped = np.clip(payback_years, 0, 20)
+            
+            fig_payback = go.Figure()
+            
+            # < 5 years region
+            payback_fast = payback_clipped <= 5
+            if np.any(payback_fast):
+                fig_payback.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.maximum(payback_clipped, np.full_like(payback_clipped, 5.0)),
+                    mode='none',
+                    fill='tonexty',
+                    fillcolor='rgba(2, 158, 115, 0.3)',
+                    name='< 5 years (attractive)',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+                fig_payback.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.full_like(payback_clipped, 5.0),
+                    mode='none',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # > 5 years region
+            payback_slow = payback_clipped > 5
+            if np.any(payback_slow):
+                fig_payback.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.full_like(payback_clipped, 5.0),
+                    mode='none',
+                    fill='tonexty',
+                    fillcolor='rgba(202, 53, 66, 0.2)',
+                    name='> 5 years (slow)',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+                fig_payback.add_trace(go.Scatter(
+                    x=risk_reduction_pct,
+                    y=np.minimum(payback_clipped, np.full_like(payback_clipped, 5.0)),
+                    mode='none',
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # Main line
+            fig_payback.add_trace(go.Scatter(
+                x=risk_reduction_pct,
+                y=payback_clipped,
+                mode='lines+markers',
+                name='Payback Period',
+                line=dict(color=COLOR_PAYBACK, width=2.5),
+                marker=dict(size=5, symbol='triangle-up', color=COLOR_PAYBACK),
+                showlegend=False,
+                hovertemplate='Effectiveness: %{x:.1f}%<br>Payback: %{y:.2f} years<extra></extra>'
+            ))
+            
+            # Threshold line
+            fig_payback.add_hline(y=5, line_dash="dash", line_color=COLOR_THRESHOLD, line_width=1.5,
+                                annotation_text='5-year threshold', annotation_position="right")
+            
+            fig_payback.update_layout(
+                title=dict(text='Panel C: Investment Payback Period', 
+                          font=dict(size=12, family='sans-serif', color='black')),
+                xaxis_title='Security Effectiveness (%)',
+                yaxis_title='Payback Period (Years)',
+                height=400,
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(family="sans-serif", size=11),
+                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                           bgcolor='rgba(255,255,255,0.9)', bordercolor='gray', borderwidth=1, font=dict(size=8)),
+                xaxis=dict(range=[-2, 101], gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True),
+                yaxis=dict(range=[-0.5, 20.5], gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showgrid=True)
+            )
+            # Invert y-axis for intuitive interpretation (shorter is better)
+            fig_payback.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig_payback, use_container_width=True)
+        
+        # Summary Statistics Table
+        st.markdown("---")
+        st.markdown("### Summary Statistics")
+        
+        percentiles = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99]
+        summary_data = {
+            'Effectiveness (%)': [f"{pct:.0f}" for pct in percentiles],
+            'Residual Risk ($)': [f"${risk_after[int(pct)]:,.0f}" for pct in percentiles],
+            'Net Profit ($M)': [f"${net_profit[int(pct)]/1e6:.2f}M" for pct in percentiles],
+            'ROI (×)': [f"{roi[int(pct)]:.2f}x" for pct in percentiles],
+            'Payback (years)': [('∞' if payback_years[int(pct)] == np.inf else f'{payback_years[int(pct)]:.2f}') for pct in percentiles]
+        }
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        
+        # Key Insights
+        st.markdown("---")
+        st.markdown("### Key Insights")
+        
+        breakeven_idx = np.argmin(np.abs(net_profit))
+        roi_3x_idx = np.argmin(np.abs(roi - 3))
+        payback_5y_idx = np.argmin(np.abs(payback_years - 5))
+        max_profit_idx = np.argmax(net_profit)
+        
+        insights = f"""
+        1. **Break-even point:** {risk_reduction_pct[breakeven_idx]:.1f}% risk reduction → Minimum viability threshold
+        
+        2. **Attractive ROI (3×):** {risk_reduction_pct[roi_3x_idx]:.1f}% risk reduction → Investment generates $3 profit per $1 invested
+        
+        3. **Fast payback (<5 years):** {risk_reduction_pct[payback_5y_idx]:.1f}% risk reduction → Investment recovers within typical budget cycles
+        
+        4. **Optimal effectiveness range:** {risk_reduction_pct[roi_3x_idx]:.0f}%-90% → Maximize value while maintaining realistic security goals
+        
+        5. **Maximum profit:** ${net_profit[max_profit_idx]/1e6:.2f}M at {risk_reduction_pct[max_profit_idx]:.0f}% effectiveness → Theoretical upper bound (99% effectiveness)
+        """
+        st.markdown(insights)
+        
+        # Summary
+        st.markdown("---")
+        st.markdown("### 📋 Final Summary")
+        
+        summary_data = {
+            'Metric': ['Optimal Labor', 'Optimal Capital', 'Optimal Production', 'Maximum Profit'],
+            'Value': [
+                f"{L_opt:,.0f} hours/year",
+                f"${K_opt:,.0f}",
+                f"{q_opt:,.0f} units/year",
+                f"${profit_opt:,.0f}/year"
+            ]
+        }
+        if lambda_opt is not None:
+            summary_data['Metric'].append('Shadow Price (λ)')
+            summary_data['Value'].append(f"${lambda_opt:,.4f}/unit")
+            summary_data['Metric'].append('Interpretation')
+            summary_data['Value'].append(f"Relaxing minimum production by 1 unit would {'increase' if lambda_opt < 0 else 'decrease'} profit by ${abs(lambda_opt):.2f}")
+        
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        
+    else:
+        st.error("❌ Optimization failed. Please check input parameters and try again.")
+        if 'error' in residuals:
+            st.error(f"Error details: {residuals['error']}")
+
+# ============================================================================
+# PAGE 5: STATISTICAL VALIDATION (REMOVED)
+# ============================================================================
+# Page 5 has been removed - Validation functionality is no longer needed
+if False and current_page == 5:
     st.markdown("## 📈 Statistical Validation")
     
     # Monte Carlo Simulation
@@ -4179,9 +4867,10 @@ elif current_page == 5:
     st.dataframe(tor_display[["Parameter", "Min → Current", "Current → Max", "Max Impact"]], 
                 use_container_width=True, hide_index=True)
 
-# PAGE 6: DATA BREACH RISK VALUATION
+# PAGE 6: REMOVED (DUPLICATE OF PAGE 3)
 # ============================================================================
-elif current_page == 6:
+# Page 6 was a duplicate of Page 3 (Data Breach Risk Valuation) and has been removed
+if False and current_page == 6:
     st.markdown("## 🔒 Data Breach Risk Valuation")
     st.markdown("Monte Carlo-based estimation of expected annual data breach losses")
     
@@ -4195,12 +4884,12 @@ elif current_page == 6:
     
     with col_param1:
         breach_revenue = st.number_input(
-            "Annual Revenue (€ billions)",
+            "Annual Revenue ($ billions)",
             min_value=1.0,
             max_value=1000.0,
             value=142.6,
             step=1.0,
-            help="Firm's annual revenue in € billions. Used for size-adjusted breach probability."
+            help="Firm's annual revenue in $ billions. Used for size-adjusted breach probability."
         )
     
     with col_param2:
@@ -4288,7 +4977,7 @@ elif current_page == 6:
             st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-label">Expected Annual Loss</div>
-                <div class="kpi-value">€{results['expected_value']:.1f}M</div>
+                <div class="kpi-value">${results['expected_value']:.1f}M</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -4296,7 +4985,7 @@ elif current_page == 6:
             st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-label">Standard Deviation</div>
-                <div class="kpi-value">€{results['std_dev']:.1f}M</div>
+                <div class="kpi-value">${results['std_dev']:.1f}M</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -4304,7 +4993,7 @@ elif current_page == 6:
             st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-label">95th Percentile</div>
-                <div class="kpi-value">€{results['percentile_95']:.1f}M</div>
+                <div class="kpi-value">${results['percentile_95']:.1f}M</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -4338,18 +5027,18 @@ elif current_page == 6:
             x=results['percentile_50'],
             line_dash="dash",
             line_color="red",
-            annotation_text=f"Median: €{results['percentile_50']:.1f}M"
+            annotation_text=f"Median: ${results['percentile_50']:.1f}M"
         )
         fig_hist.add_vline(
             x=results['percentile_95'],
             line_dash="dash",
             line_color="orange",
-            annotation_text=f"95th %ile: €{results['percentile_95']:.1f}M"
+            annotation_text=f"95th %ile: ${results['percentile_95']:.1f}M"
         )
         
         fig_hist.update_layout(
             title="Expected Annual Data Breach Loss Distribution",
-            xaxis_title="Expected Loss (€ millions)",
+            xaxis_title="Expected Loss ($ millions)",
             yaxis_title="Probability Density",
             height=500,
             plot_bgcolor='white',
@@ -4378,7 +5067,7 @@ elif current_page == 6:
         )
         fig_cdf.update_layout(
             title="Cumulative Distribution Function",
-            xaxis_title="Expected Loss (€ millions)",
+            xaxis_title="Expected Loss ($ millions)",
             yaxis_title="Cumulative Probability",
             height=400,
             plot_bgcolor='white',
@@ -4409,19 +5098,19 @@ elif current_page == 6:
                 'P-L Correlation'
             ],
             'Value': [
-                f"€{results['expected_value']:.2f}M",
-                f"€{results['std_dev']:.2f}M",
-                f"€{results['percentile_5']:.2f}M",
-                f"€{results['percentile_25']:.2f}M",
-                f"€{results['percentile_50']:.2f}M",
-                f"€{results['percentile_75']:.2f}M",
-                f"€{results['percentile_95']:.2f}M",
-                f"€{results['confidence_interval_95'][0]:.2f}M",
-                f"€{results['confidence_interval_95'][1]:.2f}M",
+                f"${results['expected_value']:.2f}M",
+                f"${results['std_dev']:.2f}M",
+                f"${results['percentile_5']:.2f}M",
+                f"${results['percentile_25']:.2f}M",
+                f"${results['percentile_50']:.2f}M",
+                f"${results['percentile_75']:.2f}M",
+                f"${results['percentile_95']:.2f}M",
+                f"${results['confidence_interval_95'][0]:.2f}M",
+                f"${results['confidence_interval_95'][1]:.2f}M",
                 f"{results['components']['p_breach'][0]:.4f} ({results['components']['p_breach'][0]:.2%})",
                 f"{results['components']['p_breach'][1]:.4f}",
-                f"€{results['components']['l_impact'][0]:.2f}M",
-                f"€{results['components']['l_impact'][1]:.2f}M",
+                f"${results['components']['l_impact'][0]:.2f}M",
+                f"${results['components']['l_impact'][1]:.2f}M",
                 f"{results['actual_correlation']:.3f}"
             ]
         }
@@ -4461,12 +5150,12 @@ elif current_page == 6:
             
             impact_data = {
                 'Source': ['Benchmark (IBM-Ponemon)', 'Insurance-Implied', 'Combined (Weighted)'],
-                'Expected (€M)': [
+                'Expected ($M)': [
                     f"{l_results['components']['benchmark']['expected']:.1f}",
                     f"{l_results['components']['insurance_implied']['expected']:.1f}",
                     f"{l_results['expected']:.1f}"
                 ],
-                'Std Dev (€M)': [
+                'Std Dev ($M)': [
                     f"{l_results['components']['benchmark']['std_dev']:.1f}",
                     f"{l_results['components']['insurance_implied']['std_dev']:.1f}",
                     f"{l_results['std_dev']:.1f}"
@@ -4531,13 +5220,13 @@ elif current_page == 6:
             orientation='h',
             marker_color=colors,
             opacity=0.7,
-            text=[f"€{d:+.1f}M" for d in deviations_sorted],
+            text=[f"${d:+.1f}M" for d in deviations_sorted],
             textposition='outside'
         ))
         fig_tornado.add_vline(x=0, line_width=2, line_color="black")
         fig_tornado.update_layout(
             title="Sensitivity Analysis: Impact on Expected Loss",
-            xaxis_title="Change in Expected Loss (€ millions)",
+            xaxis_title="Change in Expected Loss ($ millions)",
             yaxis_title="Scenario",
             height=400,
             plot_bgcolor='white',
@@ -4549,12 +5238,12 @@ elif current_page == 6:
         # Sensitivity Table
         sens_data = {
             'Scenario': list(sensitivity.keys()),
-            'Expected Loss (€M)': [f"{sensitivity[k]['expected']:.1f}" for k in sensitivity.keys()],
-            'Std Dev (€M)': [f"{sensitivity[k]['std_dev']:.1f}" for k in sensitivity.keys()],
-            '95% CI Lower (€M)': [f"{sensitivity[k]['ci_95'][0]:.1f}" for k in sensitivity.keys()],
-            '95% CI Upper (€M)': [f"{sensitivity[k]['ci_95'][1]:.1f}" for k in sensitivity.keys()],
+            'Expected Loss ($M)': [f"{sensitivity[k]['expected']:.1f}" for k in sensitivity.keys()],
+            'Std Dev ($M)': [f"{sensitivity[k]['std_dev']:.1f}" for k in sensitivity.keys()],
+            '95% CI Lower ($M)': [f"{sensitivity[k]['ci_95'][0]:.1f}" for k in sensitivity.keys()],
+            '95% CI Upper ($M)': [f"{sensitivity[k]['ci_95'][1]:.1f}" for k in sensitivity.keys()],
             'Breach Prob.': [f"{sensitivity[k]['p_breach']:.4f}" for k in sensitivity.keys()],
-            'Impact (€M)': [f"{sensitivity[k]['l_impact']:.1f}" for k in sensitivity.keys()]
+            'Impact ($M)': [f"{sensitivity[k]['l_impact']:.1f}" for k in sensitivity.keys()]
         }
         sens_df = pd.DataFrame(sens_data)
         st.dataframe(sens_df, use_container_width=True, hide_index=True)
@@ -4567,11 +5256,11 @@ elif current_page == 6:
         tail_risk = results['percentile_95']
         
         st.info(f"""
-        **Capital Allocation:** Consider €{expected_loss:.0f}M annual reserve for data risk
+        **Capital Allocation:** Consider ${expected_loss:.0f}M annual reserve for data risk
         
-        **Insurance Coverage:** Target €{tail_risk:.0f}M+ for catastrophic protection
+        **Insurance Coverage:** Target ${tail_risk:.0f}M+ for catastrophic protection
         
-        **Security Investment:** Justified up to €{expected_loss:.0f}M annually for risk reduction
+        **Security Investment:** Justified up to ${expected_loss:.0f}M annually for risk reduction
         
         **Risk Appetite:** {breach_rating} rating implies {p_breach_mean:.1%} annual breach probability
         """)
@@ -4580,9 +5269,10 @@ elif current_page == 6:
         st.info("👆 Click 'Run Risk Valuation' to perform the analysis.")
 
 # ============================================================================
-# PAGE 7: OPERATIONS OPTIMIZATION (CES + LAGRANGIAN)
+# PAGE 4: OPERATIONS OPTIMIZATION (CES + LAGRANGIAN) - REMOVED (DUPLICATE)
 # ============================================================================
-elif current_page == 7:
+# This was a duplicate of the Page 4 content above and has been removed
+if False:  # This page is now page 4, handled above
     st.markdown("## ⚙️ Operations Optimization (CES + Lagrangian)")
     st.markdown("**Maximize profit with CES production under minimum output constraint.**")
     st.caption("Diagnostic appendix only. Results do not feed into Net Value calculations.")
@@ -4639,18 +5329,18 @@ elif current_page == 7:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Optimal Labor", f"{L_opt:,.0f}", "hours/year")
+            st.metric("Optimal Labor", f"{L_opt:,.0f} hours/year")
         with col2:
-            st.metric("Optimal Capital", f"${K_opt:,.0f}", "USD")
+            st.metric("Optimal Capital", f"${K_opt:,.0f}")
         with col3:
-            st.metric("Output", f"{q_opt:,.0f}", "units/year")
+            st.metric("Output", f"{q_opt:,.0f} units/year")
         with col4:
-            st.metric("Profit", f"${profit_opt:,.0f}", "USD/year")
+            st.metric("Profit", f"${profit_opt:,.0f}/year")
         
         st.markdown("---")
         col_lambda = st.columns(1)[0]
         with col_lambda:
-            st.metric("Shadow Price λ", f"${lambda_opt:,.2f}", "USD/unit",
+            st.metric("Shadow Price λ", f"${lambda_opt:,.2f} USD/unit",
                      help="Marginal value of relaxing the minimum output constraint by one unit")
         
         # Sanity checks
@@ -4863,46 +5553,6 @@ elif current_page == 7:
         )
         st.plotly_chart(fig_costs, use_container_width=True)
         
-        # Chart 4 & 5: Benefits Analysis (from user-added charts)
-        st.markdown("---")
-        st.markdown("#### AI Operational Benefits: Gross vs Net")
-        categories_benefits = ['OEE Improvement', 'Downtime Avoidance', 'Scrap Reduction', 
-                              'Energy Savings', 'Workers Comp Reduction']
-        benefits_values = [1035000, 2000000, 250125, 319200, 19866]  # Convert to USD (assuming 1:1 for now)
-        ai_costs_annual = 570425
-        net_benefits_values = [b - (ai_costs_annual/len(categories_benefits)) for b in benefits_values]
-        
-        fig_benefits = go.Figure()
-        fig_benefits.add_trace(go.Bar(
-            x=categories_benefits,
-            y=[b/1000 for b in benefits_values],
-            name='Gross Benefits',
-            marker_color='#2ecc71',
-            opacity=0.7,
-            text=[f'${b/1000:.0f}K' for b in benefits_values],
-            textposition='outside'
-        ))
-        fig_benefits.add_trace(go.Bar(
-            x=categories_benefits,
-            y=[b/1000 for b in net_benefits_values],
-            name='Net Benefits',
-            marker_color='#3498db',
-            text=[f'${b/1000:.0f}K' for b in net_benefits_values],
-            textposition='outside'
-        ))
-        fig_benefits.update_layout(
-            title='AI Operational Benefits: Gross vs Net (Excluding Risk Reduction)',
-            xaxis_title='Benefit Category',
-            yaxis_title='Value (Thousand $)',
-            barmode='group',
-            height=450,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Inter", size=12),
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-        )
-        st.plotly_chart(fig_benefits, use_container_width=True)
-        
         # Investment Payback Profile
         st.markdown("#### Investment Payback Profile")
         investment = 1000000  # $1M capex
@@ -5017,8 +5667,8 @@ elif current_page == 7:
         if 'error' in residuals:
             st.error(f"Error details: {residuals['error']}")
 
-# Footer - Enhanced Design (only show on pages 1-3)
-if current_page in [1, 2, 3]:
+# Footer - Enhanced Design (show on all pages 2-4)
+if current_page in [2, 3, 4]:
     st.markdown("---")
     st.markdown("""
     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); padding: 2rem; border-radius: 14px; margin-top: 3rem; border: 1px solid rgba(0,102,204,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.04);">
@@ -5030,19 +5680,3 @@ if current_page in [1, 2, 3]:
         </p>
     </div>
     """, unsafe_allow_html=True)
-elif current_page in [4, 5, 6, 7]:
-    # Footer for other pages
-    st.markdown("---")
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); padding: 2rem; border-radius: 14px; margin-top: 3rem; border: 1px solid rgba(0,102,204,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.04);">
-        <p style="margin: 0; color: #5a6c7d; font-size: 0.95rem; text-align: center; font-weight: 500; line-height: 1.6;">
-            💡 <strong style="color: #0a1929;">Tip:</strong> Adjust parameters in the sidebar to explore different scenarios. All calculations update in real-time.
-        </p>
-        <p style="margin: 1rem 0 0 0; color: #94a3b8; font-size: 0.85rem; text-align: center; font-weight: 500;">
-            <span class="clemson-color" style="font-weight: 700;">Clemson University</span> × <span class="bmw-color" style="font-weight: 700;">BMW</span> • AI Optimization in Manufacturing
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Note: Data breach risk valuation classes are already defined at the top of the file (lines 18-200)
-# All duplicate code below has been removed to prevent execution on every page
