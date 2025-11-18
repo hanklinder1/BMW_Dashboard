@@ -600,17 +600,42 @@ st.markdown("""
         -moz-osx-font-smoothing: grayscale;
     }
     
-    /* Main Background - Subtle gradient */
+    /* Main Background - Enhanced gradient */
     .main {
-        background: linear-gradient(180deg, #f5f7fa 0%, #ffffff 50%, #fafbfc 100%);
+        background: linear-gradient(180deg, #f8fafc 0%, #ffffff 30%, #fafbfc 100%);
         padding: 0;
     }
     
     /* Streamlit Container Improvements */
     .block-container {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
+        padding-top: 2.5rem;
+        padding-bottom: 3.5rem;
         max-width: 1400px;
+    }
+    
+    /* Section Headers - Modern Design */
+    h2, h3, h4 {
+        color: #0a1929;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+    
+    h2 {
+        font-size: 2rem;
+        border-bottom: 3px solid #0066cc;
+        padding-bottom: 0.5rem;
+    }
+    
+    h3 {
+        font-size: 1.5rem;
+        color: #1e293b;
+    }
+    
+    h4 {
+        font-size: 1.25rem;
+        color: #334155;
     }
     
     /* Header Container - Premium Design */
@@ -789,8 +814,126 @@ st.markdown("""
     .stButton>button:hover {
         background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
         transform: translateY(-2px);
-        box-shadow: 0 6px 16px rgba(0,102,204,0.15);
+        box-shadow: 0 6px 16px rgba(0,102,204,0.15), 0 2px 6px rgba(0,0,0,0.06);
         border-color: rgba(0,102,204,0.3);
+    }
+    
+    /* Expander Styling - Enhanced */
+    .streamlit-expanderHeader {
+        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        border: 1px solid rgba(0,102,204,0.1);
+        font-weight: 600;
+        color: #0a1929;
+        transition: all 0.3s ease;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+        border-color: rgba(0,102,204,0.2);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    
+    .streamlit-expanderContent {
+        background: #ffffff;
+        border-radius: 0 0 10px 10px;
+        padding: 1.5rem;
+        border: 1px solid rgba(0,102,204,0.1);
+        border-top: none;
+        margin-top: -1px;
+    }
+    
+    /* Number Input Styling - Enhanced */
+    .stNumberInput>div>div>input {
+        border-radius: 8px;
+        border: 1.5px solid rgba(0,102,204,0.15);
+        padding: 0.75rem 1rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    
+    .stNumberInput>div>div>input:focus {
+        border-color: #0066cc;
+        box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+        outline: none;
+    }
+    
+    /* File Uploader Styling */
+    .stFileUploader>div {
+        border-radius: 10px;
+        border: 2px dashed rgba(0,102,204,0.2);
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+        transition: all 0.3s ease;
+    }
+    
+    .stFileUploader>div:hover {
+        border-color: rgba(0,102,204,0.4);
+        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    }
+    
+    /* Download Button Styling */
+    .stDownloadButton>button {
+        background: linear-gradient(135deg, #0066cc 0%, #0052a3 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.75rem 1.5rem;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0,102,204,0.25);
+    }
+    
+    .stDownloadButton>button:hover {
+        background: linear-gradient(135deg, #0052a3 0%, #0066cc 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0,102,204,0.35);
+    }
+    
+    /* Chart Containers - Enhanced */
+    .js-plotly-plot {
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+        background: white;
+        padding: 1rem;
+    }
+    
+    /* Divider Lines - Enhanced */
+    hr {
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg, transparent 0%, rgba(0,102,204,0.2) 50%, transparent 100%);
+        margin: 2rem 0;
+    }
+    
+    /* Success/Error Messages - Enhanced */
+    .stSuccess {
+        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+        border-left: 4px solid #10b981;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    .stError {
+        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+        border-left: 4px solid #ef4444;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    .stWarning {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border-left: 4px solid #f59e0b;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    .stInfo {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+        padding: 1rem;
     }
     
     .stButton>button[kind="primary"] {
@@ -3737,55 +3880,8 @@ elif current_page == 4:
     
     # Adjustable Parameters Section
     st.markdown("### 🎛️ Adjustable Parameters")
-    with st.expander("📥 Adjust AI Operational Benefits Parameters", expanded=True):
-        # Excel Import Section
-        col_import1, col_import2 = st.columns([2, 1])
-        
-        with col_import1:
-            uploaded_file = st.file_uploader(
-                "📊 Import Parameters from Excel",
-                type=['xlsx', 'xls'],
-                key="benefits_excel_upload",
-                help="Upload an Excel file with Parameter and Value columns"
-            )
-        
-        with col_import2:
-            # Create and download template
-            template_data = {
-                'Parameter': [
-                    'OEE Improvement',
-                    'Downtime Avoidance',
-                    'Scrap Reduction',
-                    'Energy Savings',
-                    'Workers Comp Reduction',
-                    'Annual AI Costs'
-                ],
-                'Value': [
-                    1035000,
-                    2000000,
-                    250125,
-                    319200,
-                    19866,
-                    570425
-                ]
-            }
-            template_df = pd.DataFrame(template_data)
-            
-            # Convert to Excel bytes
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                template_df.to_excel(writer, index=False, sheet_name='Parameters')
-            excel_bytes = output.getvalue()
-            
-            st.download_button(
-                "📥 Download Template",
-                excel_bytes,
-                file_name="AI_Operational_Benefits_Template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_benefits_template"
-            )
-        
-        # Default values (will be overridden by Excel if uploaded)
+    with st.expander("📊 Adjust AI Operational Benefits Parameters", expanded=True):
+        # Default values
         default_values = {
             'OEE Improvement': 1035000,
             'Downtime Avoidance': 2000000,
@@ -3794,46 +3890,6 @@ elif current_page == 4:
             'Workers Comp Reduction': 19866,
             'Annual AI Costs': 570425
         }
-        
-        # Parse Excel file if uploaded (only process new files)
-        if uploaded_file is not None:
-            # Track file ID to avoid reprocessing
-            current_file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else id(uploaded_file)
-            last_processed_id = st.session_state.get('last_benefits_excel_file_id')
-            
-            # Only process if this is a new file
-            if current_file_id != last_processed_id:
-                try:
-                    # Read Excel file
-                    df = pd.read_excel(uploaded_file, engine='openpyxl')
-                    
-                    # Check format: Parameter | Value columns
-                    if 'Parameter' in df.columns and 'Value' in df.columns:
-                        param_dict = dict(zip(df['Parameter'], df['Value']))
-                    # Alternative: first two columns
-                    elif len(df.columns) >= 2:
-                        param_dict = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
-                    else:
-                        st.error("❌ Excel format not recognized. Expected 'Parameter' and 'Value' columns.")
-                        param_dict = {}
-                    
-                    # Update default values with Excel values
-                    for param_name, value in param_dict.items():
-                        # Clean parameter name (remove extra spaces, case insensitive matching)
-                        param_name_clean = str(param_name).strip()
-                        for key in default_values.keys():
-                            if param_name_clean.lower() == key.lower():
-                                try:
-                                    default_values[key] = float(value)
-                                except (ValueError, TypeError):
-                                    st.warning(f"⚠️ Invalid value for {key}: {value}")
-                    
-                    # Store file ID to prevent reprocessing
-                    st.session_state.last_benefits_excel_file_id = current_file_id
-                    st.success("✅ Excel file loaded successfully!")
-                    
-                except Exception as e:
-                    st.error(f"❌ Error reading Excel file: {str(e)}")
         
         # Store values in session state for persistence
         if 'benefits_oee' not in st.session_state:
@@ -3848,17 +3904,6 @@ elif current_page == 4:
             st.session_state.benefits_workers_comp = default_values['Workers Comp Reduction']
         if 'benefits_ai_costs' not in st.session_state:
             st.session_state.benefits_ai_costs = default_values['Annual AI Costs']
-        
-        # Update session state if Excel was loaded
-        if uploaded_file is not None:
-            st.session_state.benefits_oee = default_values['OEE Improvement']
-            st.session_state.benefits_downtime = default_values['Downtime Avoidance']
-            st.session_state.benefits_scrap = default_values['Scrap Reduction']
-            st.session_state.benefits_energy = default_values['Energy Savings']
-            st.session_state.benefits_workers_comp = default_values['Workers Comp Reduction']
-            st.session_state.benefits_ai_costs = default_values['Annual AI Costs']
-        
-        st.markdown("---")
         
         col1, col2 = st.columns(2)
         
@@ -3988,43 +4033,252 @@ elif current_page == 4:
     
     # Inputs panel with notebook defaults
     with st.expander("📥 Inputs (USD)", expanded=True):
+        # Excel Import Section for CES Parameters
+        st.markdown("#### 📊 Import Parameters from Excel")
+        col_excel1, col_excel2 = st.columns([2, 1])
+        
+        with col_excel1:
+            ces_uploaded_file = st.file_uploader(
+                "Upload CES Production Parameters",
+                type=['xlsx', 'xls'],
+                key="ces_excel_upload",
+                help="Upload an Excel file with Parameter and Value columns"
+            )
+        
+        with col_excel2:
+            # Create and download template for CES parameters
+            ces_template_data = {
+                'Parameter': [
+                    'A (Total factor productivity)',
+                    'α (Labor share parameter)',
+                    'ρ (Substitution parameter)',
+                    'w: Wage ($/hr)',
+                    'φ: Overhead multiplier',
+                    'r: Capital rate (annual)',
+                    'Material cost ($/unit)',
+                    'Selling price ($/unit)',
+                    'q_min: Minimum output (units/year)',
+                    'τ: Labeling time (hr/point)',
+                    'Labels per year',
+                    'Dataset size (TB)',
+                    'Number of models',
+                    'Storage cost ($/TB-yr)',
+                    'ETL cost ($/TB-yr)',
+                    'MLOps cost ($/model-yr)',
+                    'Capital expenditure ($)',
+                    'Useful life (years)',
+                    'Expected annual loss pre-AI ($)',
+                    'AI-driven risk reduction'
+                ],
+                'Value': [
+                    1.2,
+                    0.60,
+                    0.43,
+                    31.0,
+                    1.35,
+                    0.15,
+                    725.0,
+                    1460.0,
+                    100000,
+                    0.0065,
+                    12000.0,
+                    5.0,
+                    3.0,
+                    325.0,
+                    650.0,
+                    19000.0,
+                    1000000.0,
+                    8.75,
+                    390000.0,
+                    0.425
+                ]
+            }
+            ces_template_df = pd.DataFrame(ces_template_data)
+            
+            # Convert to Excel bytes
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                ces_template_df.to_excel(writer, index=False, sheet_name='CES_Parameters')
+            ces_excel_bytes = output.getvalue()
+            
+            st.download_button(
+                "📥 Download Template",
+                ces_excel_bytes,
+                file_name="CES_Production_Parameters_Template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_ces_template"
+            )
+        
+        # Default values for CES parameters
+        ces_default_values = {
+            'A (Total factor productivity)': 1.2,
+            'α (Labor share parameter)': 0.60,
+            'ρ (Substitution parameter)': 0.43,
+            'w: Wage ($/hr)': 31.0,
+            'φ: Overhead multiplier': 1.35,
+            'r: Capital rate (annual)': 0.15,
+            'Material cost ($/unit)': 725.0,
+            'Selling price ($/unit)': 1460.0,
+            'q_min: Minimum output (units/year)': 100000,
+            'τ: Labeling time (hr/point)': 0.0065,
+            'Labels per year': 12000.0,
+            'Dataset size (TB)': 5.0,
+            'Number of models': 3.0,
+            'Storage cost ($/TB-yr)': 325.0,
+            'ETL cost ($/TB-yr)': 650.0,
+            'MLOps cost ($/model-yr)': 19000.0,
+            'Capital expenditure ($)': 1000000.0,
+            'Useful life (years)': 8.75,
+            'Expected annual loss pre-AI ($)': 390000.0,
+            'AI-driven risk reduction': 0.425
+        }
+        
+        # Parse Excel file if uploaded
+        if ces_uploaded_file is not None:
+            current_file_id = ces_uploaded_file.file_id if hasattr(ces_uploaded_file, 'file_id') else id(ces_uploaded_file)
+            last_processed_id = st.session_state.get('last_ces_excel_file_id')
+            
+            if current_file_id != last_processed_id:
+                try:
+                    df = pd.read_excel(ces_uploaded_file, engine='openpyxl')
+                    
+                    if 'Parameter' in df.columns and 'Value' in df.columns:
+                        param_dict = dict(zip(df['Parameter'], df['Value']))
+                    elif len(df.columns) >= 2:
+                        param_dict = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+                    else:
+                        st.error("❌ Excel format not recognized. Expected 'Parameter' and 'Value' columns.")
+                        param_dict = {}
+                    
+                    # Update default values with Excel values
+                    for param_name, value in param_dict.items():
+                        param_name_clean = str(param_name).strip()
+                        for key in ces_default_values.keys():
+                            if param_name_clean.lower() == key.lower():
+                                try:
+                                    ces_default_values[key] = float(value)
+                                except (ValueError, TypeError):
+                                    st.warning(f"⚠️ Invalid value for {key}: {value}")
+                    
+                    st.session_state.last_ces_excel_file_id = current_file_id
+                    st.success("✅ CES parameters loaded from Excel!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error reading Excel file: {str(e)}")
+        
+        # Store in session state (simplified keys)
+        ces_param_map = {
+            'A (Total factor productivity)': 'ces_A_val',
+            'α (Labor share parameter)': 'ces_alpha_val',
+            'ρ (Substitution parameter)': 'ces_rho_val',
+            'w: Wage ($/hr)': 'ces_w_val',
+            'φ: Overhead multiplier': 'ces_phi_val',
+            'r: Capital rate (annual)': 'ces_r_val',
+            'Material cost ($/unit)': 'ces_cm_val',
+            'Selling price ($/unit)': 'ces_p_val',
+            'q_min: Minimum output (units/year)': 'ces_qmin_val',
+            'τ: Labeling time (hr/point)': 'ces_tau_val',
+            'Labels per year': 'ces_nlabels_val',
+            'Dataset size (TB)': 'ces_tb_val',
+            'Number of models': 'ces_nmodels_val',
+            'Storage cost ($/TB-yr)': 'ces_ctb_val',
+            'ETL cost ($/TB-yr)': 'ces_alpha_yr_val',
+            'MLOps cost ($/model-yr)': 'ces_beta_val',
+            'Capital expenditure ($)': 'ces_capex_val',
+            'Useful life (years)': 'ces_life_val',
+            'Expected annual loss pre-AI ($)': 'ces_breach_val',
+            'AI-driven risk reduction': 'ces_risk_reduction_val'
+        }
+        
+        # Initialize session state
+        for key, session_key in ces_param_map.items():
+            if session_key not in st.session_state:
+                st.session_state[session_key] = ces_default_values[key]
+        
+        # Update from Excel if loaded (after processing)
+        if ces_uploaded_file is not None and 'last_ces_excel_file_id' in st.session_state:
+            for key, session_key in ces_param_map.items():
+                st.session_state[session_key] = ces_default_values[key]
+        
+        st.markdown("---")
+        
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("#### CES Production Parameters")
-            A = st.number_input("A (Total factor productivity)", 0.1, 100.0, 1.2, 0.1, key="ces_A",
+            A = st.number_input("A (Total factor productivity)", 0.1, 100.0, 
+                               float(st.session_state.ces_A_val), 0.1, key="ces_A",
                                help="TFP scaled to dollar inputs (Oberfield & Raval 2021)")
-            alpha_ces = st.number_input("α (Labor share parameter)", 0.01, 0.99, 0.60, 0.01, key="ces_alpha",
+            st.session_state.ces_A_val = A
+            alpha_ces = st.number_input("α (Labor share parameter)", 0.01, 0.99, 
+                                       float(st.session_state.ces_alpha_val), 0.01, key="ces_alpha",
                                        help="Labor distribution weight")
-            rho = st.number_input("ρ (Substitution parameter)", -0.99, 0.99, 0.43, 0.01, key="ces_rho",
+            st.session_state.ces_alpha_val = alpha_ces
+            rho = st.number_input("ρ (Substitution parameter)", -0.99, 0.99, 
+                                 float(st.session_state.ces_rho_val), 0.01, key="ces_rho",
                                  help="σ = 0.70, capital-labor complements (Oberfield & Raval 2021)")
+            st.session_state.ces_rho_val = rho
             
             st.markdown("#### Cost Parameters")
-            w = st.number_input("w: Wage ($/hr)", 10.0, 200.0, 31.0, 1.0, key="ces_w")
-            phi = st.number_input("φ: Overhead multiplier", 1.0, 3.0, 1.35, 0.1, key="ces_phi")
-            r = st.number_input("r: Capital rate (annual)", 0.01, 0.50, 0.15, 0.01, key="ces_r",
+            w = st.number_input("w: Wage ($/hr)", 10.0, 200.0, 
+                               float(st.session_state.ces_w_val), 1.0, key="ces_w")
+            st.session_state.ces_w_val = w
+            phi = st.number_input("φ: Overhead multiplier", 1.0, 3.0, 
+                                 float(st.session_state.ces_phi_val), 0.1, key="ces_phi")
+            st.session_state.ces_phi_val = phi
+            r = st.number_input("r: Capital rate (annual)", 0.01, 0.50, 
+                               float(st.session_state.ces_r_val), 0.01, key="ces_r",
                                help="Annual cost of capital as fraction (industry standard)")
-            material_cost = st.number_input("Material cost ($/unit)", 50.0, 1000.0, 725.0, 10.0, key="ces_cm")
-            selling_price = st.number_input("Selling price ($/unit)", 100.0, 2000.0, 1460.0, 10.0, key="ces_p")
+            st.session_state.ces_r_val = r
+            material_cost = st.number_input("Material cost ($/unit)", 50.0, 1000.0, 
+                                            float(st.session_state.ces_cm_val), 10.0, key="ces_cm")
+            st.session_state.ces_cm_val = material_cost
+            selling_price = st.number_input("Selling price ($/unit)", 100.0, 2000.0, 
+                                            float(st.session_state.ces_p_val), 10.0, key="ces_p")
+            st.session_state.ces_p_val = selling_price
             
         with col2:
             st.markdown("#### Constraint & Fixed Costs")
-            q_min = st.number_input("q_min: Minimum output (units/year)", 1000, 1000000, 100000, 1000, key="ces_qmin")
+            q_min = st.number_input("q_min: Minimum output (units/year)", 1000, 1000000, 
+                                   int(st.session_state.ces_qmin_val), 1000, key="ces_qmin")
+            st.session_state.ces_qmin_val = q_min
             
             st.markdown("#### AI/Data Costs (USD/year)")
-            tau = st.number_input("τ: Labeling time (hr/point)", 0.001, 0.1, 0.0065, 0.0001, key="ces_tau")
-            n_labels = st.number_input("Labels per year", 1000.0, 100000.0, 12000.0, 1000.0, key="ces_nlabels")
-            TB = st.number_input("Dataset size (TB)", 1.0, 100.0, 5.0, 0.5, key="ces_tb")
-            n_models = st.number_input("Number of models", 1.0, 10.0, 3.0, 1.0, key="ces_nmodels")
-            cTB_yr = st.number_input("Storage cost ($/TB-yr)", 100.0, 1000.0, 325.0, 10.0, key="ces_ctb")
-            alpha_yr = st.number_input("ETL cost ($/TB-yr)", 100.0, 2000.0, 650.0, 10.0, key="ces_alpha_yr")
-            beta_ops_yr = st.number_input("MLOps cost ($/model-yr)", 5000.0, 50000.0, 19000.0, 1000.0, key="ces_beta")
+            tau = st.number_input("τ: Labeling time (hr/point)", 0.001, 0.1, 
+                                 float(st.session_state.ces_tau_val), 0.0001, key="ces_tau")
+            st.session_state.ces_tau_val = tau
+            n_labels = st.number_input("Labels per year", 1000.0, 100000.0, 
+                                      float(st.session_state.ces_nlabels_val), 1000.0, key="ces_nlabels")
+            st.session_state.ces_nlabels_val = n_labels
+            TB = st.number_input("Dataset size (TB)", 1.0, 100.0, 
+                                float(st.session_state.ces_tb_val), 0.5, key="ces_tb")
+            st.session_state.ces_tb_val = TB
+            n_models = st.number_input("Number of models", 1.0, 10.0, 
+                                     float(st.session_state.ces_nmodels_val), 1.0, key="ces_nmodels")
+            st.session_state.ces_nmodels_val = n_models
+            cTB_yr = st.number_input("Storage cost ($/TB-yr)", 100.0, 1000.0, 
+                                     float(st.session_state.ces_ctb_val), 10.0, key="ces_ctb")
+            st.session_state.ces_ctb_val = cTB_yr
+            alpha_yr = st.number_input("ETL cost ($/TB-yr)", 100.0, 2000.0, 
+                                      float(st.session_state.ces_alpha_yr_val), 10.0, key="ces_alpha_yr")
+            st.session_state.ces_alpha_yr_val = alpha_yr
+            beta_ops_yr = st.number_input("MLOps cost ($/model-yr)", 5000.0, 50000.0, 
+                                         float(st.session_state.ces_beta_val), 1000.0, key="ces_beta")
+            st.session_state.ces_beta_val = beta_ops_yr
             
             st.markdown("#### Capital & Risk")
-            capex = st.number_input("Capital expenditure ($)", 100000.0, 10000000.0, 1000000.0, 100000.0, key="ces_capex")
-            useful_life_years = st.number_input("Useful life (years)", 1.0, 20.0, 8.75, 0.25, key="ces_life")
-            L_breach_baseline = st.number_input("Expected annual loss pre-AI ($)", 10000.0, 1000000.0, 390000.0, 10000.0, key="ces_breach")
-            risk_reduction_rate = st.number_input("AI-driven risk reduction", 0.0, 1.0, 0.425, 0.01, key="ces_risk_reduction")
+            capex = st.number_input("Capital expenditure ($)", 100000.0, 10000000.0, 
+                                   float(st.session_state.ces_capex_val), 100000.0, key="ces_capex")
+            st.session_state.ces_capex_val = capex
+            useful_life_years = st.number_input("Useful life (years)", 1.0, 20.0, 
+                                               float(st.session_state.ces_life_val), 0.25, key="ces_life")
+            st.session_state.ces_life_val = useful_life_years
+            L_breach_baseline = st.number_input("Expected annual loss pre-AI ($)", 10000.0, 1000000.0, 
+                                               float(st.session_state.ces_breach_val), 10000.0, key="ces_breach")
+            st.session_state.ces_breach_val = L_breach_baseline
+            risk_reduction_rate = st.number_input("AI-driven risk reduction", 0.0, 1.0, 
+                                                  float(st.session_state.ces_risk_reduction_val), 0.01, key="ces_risk_reduction")
+            st.session_state.ces_risk_reduction_val = risk_reduction_rate
     
     # Calculate fixed costs
     C_label = tau * n_labels * w * phi
@@ -5671,11 +5925,8 @@ if False:  # This page is now page 4, handled above
 if current_page in [2, 3, 4]:
     st.markdown("---")
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); padding: 2rem; border-radius: 14px; margin-top: 3rem; border: 1px solid rgba(0,102,204,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.04);">
-        <p style="margin: 0; color: #5a6c7d; font-size: 0.95rem; text-align: center; font-weight: 500; line-height: 1.6;">
-            💡 <strong style="color: #0a1929;">Tip:</strong> Adjust parameters in the sidebar to explore different scenarios. All calculations update in real-time.
-        </p>
-        <p style="margin: 1rem 0 0 0; color: #94a3b8; font-size: 0.85rem; text-align: center; font-weight: 500;">
+    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); padding: 1.5rem; border-radius: 14px; margin-top: 3rem; border: 1px solid rgba(0,102,204,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.04);">
+        <p style="margin: 0; color: #94a3b8; font-size: 0.85rem; text-align: center; font-weight: 500;">
             <span class="clemson-color" style="font-weight: 700;">Clemson University</span> × <span class="bmw-color" style="font-weight: 700;">BMW</span> • AI Optimization in Manufacturing
         </p>
     </div>
