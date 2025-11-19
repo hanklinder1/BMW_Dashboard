@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.ticker import FuncFormatter
 import seaborn as sns
-from fpdf import FPDF
 
 # ============================================================================
 # DATA BREACH RISK VALUATION CLASSES
@@ -637,25 +636,6 @@ st.markdown("""
     h4 {
         font-size: 1.25rem;
         color: #334155;
-    }
-    
-    .help-callout {
-        background: linear-gradient(135deg, rgba(0,102,204,0.08) 0%, rgba(255,255,255,0.9) 100%);
-        border-left: 4px solid #0066cc;
-        padding: 1rem 1.25rem;
-        border-radius: 12px;
-        margin: 1rem 0 1.5rem 0;
-        color: #0a1929;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-    }
-    
-    .help-callout strong {
-        color: #0066cc;
-    }
-    
-    .help-icon {
-        font-size: 1.2rem;
-        margin-right: 0.35rem;
     }
     
     /* Header Container - Premium Design */
@@ -3898,53 +3878,9 @@ elif current_page == 4:
     st.markdown("## 💹 Net Value")
     st.markdown("**Complete cost-benefit analysis with operations optimization.**")
     
-    # Executive summary metrics
-    roi_pct = None
-    if incremental_cost not in (None, 0):
-        roi_pct = (net_value / incremental_cost) * 100 if incremental_cost != 0 else None
-    
-    payback_years = None
-    if net_value > 0:
-        payback_years = incremental_cost / net_value if incremental_cost is not None else None
-    
-    payback_display = "N/A"
-    if payback_years is not None:
-        if payback_years < 1:
-            payback_display = "< 1 yr"
-        elif payback_years == np.inf:
-            payback_display = "Not reached"
-        else:
-            payback_display = f"{payback_years:.1f} yrs"
-    
-    st.markdown("### 📊 Executive Summary")
-    summary_cols = st.columns(5)
-    with summary_cols[0]:
-        st.metric("💰 Net Annual Value", f"${net_value:,.0f}")
-    with summary_cols[1]:
-        st.metric("📈 Total Benefits", f"${benefits:,.0f}")
-    with summary_cols[2]:
-        st.metric("📊 Incremental Cost", f"${incremental_cost:,.0f}")
-    with summary_cols[3]:
-        st.metric("🎯 ROI", f"{roi_pct:.1f}%" if roi_pct is not None else "—")
-    with summary_cols[4]:
-        st.metric("⏱ Payback Period", payback_display)
-    
-    st.markdown("""
-    <div class="help-callout">
-        <span class="help-icon">ℹ️</span>
-        <strong>How to read this:</strong> Net Annual Value shows year-one profit impact, ROI normalizes benefits vs incremental cost, and Payback estimates how quickly savings offset investments.
-    </div>
-    """, unsafe_allow_html=True)
-    
     # Adjustable Parameters Section
     st.markdown("### 🎛️ Adjustable Parameters")
     with st.expander("📊 Adjust AI Operational Benefits Parameters", expanded=True):
-        st.markdown("""
-        <div class="help-callout">
-            <span class="help-icon">💡</span>
-            <strong>Tip:</strong> Use these sliders to test upside/downside scenarios. Annual AI Costs are spread evenly across categories for the net view, so increasing costs boosts the blue bars in the chart below.
-        </div>
-        """, unsafe_allow_html=True)
         # Default values
         default_values = {
             'OEE Improvement': 1035000,
@@ -4074,92 +4010,6 @@ elif current_page == 4:
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     )
     st.plotly_chart(fig_benefits, use_container_width=True)
-    
-    # Export functionality
-    st.markdown("### 📤 Export Results")
-    summary_rows = [
-        ("Net Annual Value", net_value),
-        ("Total Benefits", benefits),
-        ("Incremental Cost", incremental_cost),
-        ("Cost Before AI", cost_before),
-        ("Cost After AI", cost_after),
-        ("ROI (%)", roi_pct if roi_pct is not None else np.nan),
-        ("Payback (years)", payback_years if payback_years is not None else np.nan)
-    ]
-    summary_df = pd.DataFrame(summary_rows, columns=["Metric", "Value"])
-    
-    benefit_labels = {
-        "oee_improvement": "OEE Improvement",
-        "downtime_avoidance": "Downtime Avoidance",
-        "risk_reduction": "Risk Reduction",
-        "scrap_reduction": "Scrap Reduction"
-    }
-    benefits_df = pd.DataFrame(
-        [(benefit_labels.get(k, k.replace("_", " ").title()), v) 
-         for k, v in benefits_breakdown.items() if k in benefit_labels],
-        columns=["Benefit Component", "Value ($)"]
-    )
-    
-    def cost_df(cost_dict: Dict[str, float], title_prefix: str) -> pd.DataFrame:
-        exclude = {"total", "point_estimate_usd"}
-        records = []
-        for k, v in cost_dict.items():
-            if k in exclude or not isinstance(v, (int, float)):
-                continue
-            records.append((f"{title_prefix} - {k.replace('_', ' ').title()}", v))
-        return pd.DataFrame(records, columns=["Cost Component", "Value ($)"])
-    
-    cost_before_df = cost_df(cost_before_breakdown, "Before AI")
-    cost_after_df = cost_df(cost_after_breakdown, "After AI")
-    
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        summary_df.to_excel(writer, index=False, sheet_name='Summary')
-        benefits_df.to_excel(writer, index=False, sheet_name='Benefits')
-        cost_before_df.to_excel(writer, index=False, sheet_name='Costs_Before_AI')
-        cost_after_df.to_excel(writer, index=False, sheet_name='Costs_After_AI')
-    excel_data = excel_buffer.getvalue()
-    
-    st.download_button(
-        "⬇️ Download Excel Summary",
-        data=excel_data,
-        file_name="BMW_AI_Net_Value_Summary.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_net_value_excel"
-    )
-    
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "BMW AI Net Value Summary", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"Net Annual Value: ${net_value:,.0f}", ln=True)
-    pdf.cell(0, 10, f"Total Benefits: ${benefits:,.0f}", ln=True)
-    pdf.cell(0, 10, f"Incremental Cost: ${incremental_cost:,.0f}", ln=True)
-    if roi_pct is not None:
-        pdf.cell(0, 10, f"ROI: {roi_pct:.1f}%", ln=True)
-    pdf.cell(0, 10, f"Payback Period: {payback_display}", ln=True)
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "Benefit Breakdown", ln=True)
-    pdf.set_font("Arial", size=11)
-    for _, row in benefits_df.iterrows():
-        pdf.cell(0, 8, f"- {row['Benefit Component']}: ${row['Value ($)']:,.0f}", ln=True)
-    pdf.ln(4)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "Key Notes", ln=True)
-    pdf.set_font("Arial", size=11)
-    pdf.multi_cell(0, 8, "Values are annualized. ROI compares Net Value vs incremental cost, and Payback estimates how quickly savings offset the incremental investment.")
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    
-    st.download_button(
-        "⬇️ Download PDF Summary",
-        data=pdf_bytes,
-        file_name="BMW_AI_Net_Value_Summary.pdf",
-        mime="application/pdf",
-        key="download_net_value_pdf"
-    )
     
     st.markdown("---")
     
@@ -4351,12 +4201,6 @@ elif current_page == 4:
                 st.session_state[session_key] = ces_default_values[key]
         
         st.markdown("---")
-        st.markdown("""
-        <div class="help-callout">
-            <span class="help-icon">🧠</span>
-            <strong>Need guidance?</strong> Start with the Excel template, then tweak any field inline. Labor/Capital inputs (left) feed the CES production curve, while AI/Data costs (right) flow into fixed cost and risk models.
-        </div>
-        """, unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         
