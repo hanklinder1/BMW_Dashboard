@@ -3488,7 +3488,7 @@ if current_page == 2:
     
     st.markdown("---")
     st.markdown("### Final Equation")
-    st.latex(r"\text{Net Value} = \text{Benefits} - (\text{Cost After} - \text{Cost Before})")
+    st.latex(r"\text{Net Value} = (\text{Benefits After} - \text{Benefits Before}) - (\text{Cost After} - \text{Cost Before})")
     st.caption(f"**Benefits** = ${benefits:,.0f} | **Cost After** = ${cost_after:,.0f} | **Cost Before** = ${cost_before:,.0f} | **Net Value** = ${net_value:,.0f}")
     st.markdown("**Full equation:** Net Value = Benefits − (Cost_after − Cost_before)")
 
